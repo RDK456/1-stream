@@ -68,6 +68,8 @@ data class StoreData(
     val defaultInstalled: List<String> = emptyList(),
     /** Converted Android plugin jar name to the SHA-256 of the jar the user approved. */
     val approvedPlugins: Map<String, String> = emptyMap(),
+    /** Chosen language and type filters on Home and in Discover plugins ("homeLang", "homeType", "discLang", "discType"); a missing key means All. */
+    val filters: Map<String, String> = emptyMap(),
 )
 
 /** One JSON file, rewritten on every change. Fine for the data volumes involved. */
@@ -100,6 +102,8 @@ class Store(private val file: File) {
 
     fun approvePlugin(jarName: String, sha256: String) = update { it.copy(approvedPlugins = it.approvedPlugins + (jarName to sha256)) }
     fun isApproved(jar: File) = _data.value.approvedPlugins[jar.name]?.equals(app.onestream.update.Updater.sha256(jar), ignoreCase = true) == true
+
+    fun setFilter(key: String, value: String?) = update { it.copy(filters = if (value == null) it.filters - key else it.filters + (key to value)) }
 
     fun addRepo(url: String) = update { if (url in it.repos) it else it.copy(repos = it.repos + url) }
     fun removeRepo(url: String) = update { it.copy(repos = it.repos - url) }

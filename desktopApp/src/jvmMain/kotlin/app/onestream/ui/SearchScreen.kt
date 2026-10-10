@@ -97,8 +97,10 @@ fun SearchScreen(app: AppState) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf(0) } // 0 = all (filtered) providers
-    var langFilter by remember { mutableStateOf<String?>(null) }
-    var typeFilter by remember { mutableStateOf<String?>(null) }
+    // Kept in the app data, so they survive switching tabs, opening a title and restarting
+    val saved by app.store.data.collectAsState()
+    val langFilter = saved.filters["homeLang"]
+    val typeFilter = saved.filters["homeType"]
     var showFilters by remember { mutableStateOf(false) }
     val shown = providers.filter { p -> (langFilter == null || p.lang == langFilter) && (typeFilter == null || p.supportedTypes.any { it.name == typeFilter }) }
     var results by remember { mutableStateOf<List<SearchResponse>>(emptyList()) }
@@ -139,8 +141,8 @@ fun SearchScreen(app: AppState) {
             val langs = providers.groupingBy { it.lang }.eachCount().entries.sortedByDescending { it.value }.map { FilterOption(it.key, langName(it.key) + " ${it.value}") }
             val types = providers.flatMap { it.supportedTypes }.groupingBy { it.name }.eachCount().entries.sortedByDescending { it.value }
                 .map { FilterOption(it.key, (if (it.key == "NSFW") "NSFW 18+" else it.key) + " ${it.value}") }
-            FilterRow("Language", langs, langFilter, { langFilter = it; selected = 0 })
-            FilterRow("Type", types, typeFilter, { typeFilter = it; selected = 0 })
+            FilterRow("Language", langs, langFilter, { app.store.setFilter("homeLang", it); selected = 0 })
+            FilterRow("Type", types, typeFilter, { app.store.setFilter("homeType", it); selected = 0 })
             if (shown.size > 1) PillTabs(
                 listOf("All ${shown.size}") + shown.map { it.name }, selected, { selected = it },
                 Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()),

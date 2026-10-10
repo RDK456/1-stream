@@ -53,8 +53,8 @@ fun PluginsScreen(app: AppState) {
     var message by remember { mutableStateOf<String?>(null) }
     var pending by remember { mutableStateOf<PendingCs3?>(null) }
     var query by remember { mutableStateOf("") }
-    var langFilter by remember { mutableStateOf<String?>(null) }
-    var typeFilter by remember { mutableStateOf<String?>(null) }
+    val langFilter = data.filters["discLang"]
+    val typeFilter = data.filters["discType"]
     var hideInstalled by remember { mutableStateOf(false) }
     var showBlocked by remember { mutableStateOf(false) }
     var limit by remember { mutableStateOf(40) }
@@ -121,6 +121,8 @@ fun PluginsScreen(app: AppState) {
                             if (p.ok) Text("Providers: " + p.providers.joinToString().ifBlank { "none" }, color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
                             else Text("Disabled: ${p.error}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                         }
+                        if (p.manifest?.android == true && p.error?.startsWith("This Android plugin was not approved") == true)
+                            GhostButton("Approve", { app.store.approvePlugin(p.file.name, Updater.sha256(p.file)); app.reloadPlugins() })
                         GhostButton("Remove", { if (!app.removePlugin(p)) message = "Could not delete ${p.file.name}; close the app and delete it manually." })
                     }
                 }
@@ -190,8 +192,8 @@ fun PluginsScreen(app: AppState) {
                     )
                     SearchField(query, { query = it; limit = 40 }, "Search plugins by name")
                     Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        FilterRow("Language", langs, langFilter, { langFilter = it; limit = 40 })
-                        FilterRow("Type", types, typeFilter, { typeFilter = it; limit = 40 })
+                        FilterRow("Language", langs, langFilter, { app.store.setFilter("discLang", it); limit = 40 })
+                        FilterRow("Type", types, typeFilter, { app.store.setFilter("discType", it); limit = 40 })
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Chip("Hide installed", hideInstalled) { hideInstalled = !hideInstalled; limit = 40 }
                             if (blocked > 0) Chip("Show $blocked that can't run", showBlocked) { showBlocked = !showBlocked; limit = 40 }

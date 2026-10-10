@@ -173,9 +173,10 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
 
     fun pickQuality(q: String) {
         val l = current ?: return
-        val url = if (q == "Auto") l.url else variants.firstOrNull { "${it.first}p" == q }?.second ?: return
+        // Keep the master playlist and cap the height instead of opening one variant: a variant alone has no audio or subtitle tracks
+        val cap = if (q == "Auto") emptyList() else variants.firstOrNull { "${it.first}p" == q }?.let { listOf(":adaptive-logic=highest", ":adaptive-maxheight=${it.first}") } ?: return
         quality = q
-        player.play(Media(url, l.referer, l.userAgent()), player.positionMs)
+        player.play(Media(l.url, l.referer, l.userAgent(), cap), player.positionMs)
         say("Quality: $q")
     }
 
@@ -234,6 +235,13 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
                 Downloader.hlsVariants(text, l.url)
             }.getOrDefault(emptyList())
         }
+    }
+
+    // Subtitles on by default once the stream has reported its tracks (and any files the provider found), unless the user chose
+    LaunchedEffect(current, subs.size, player.playing) {
+        if (!player.playing) return@LaunchedEffect
+        delay(2500)
+        withContext(Dispatchers.IO) { runCatching { player.autoSubtitle(subs.map { it.lang to it.url }) } }
     }
 
     // Save progress periodically

@@ -12,6 +12,7 @@ import org.jetbrains.skia.ColorType
 import org.jetbrains.skia.ImageInfo
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory
 import uk.co.caprica.vlcj.factory.discovery.NativeDiscovery
+import uk.co.caprica.vlcj.media.TrackType
 import uk.co.caprica.vlcj.player.base.MediaPlayer
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter
 import uk.co.caprica.vlcj.player.embedded.EmbeddedMediaPlayer
@@ -32,6 +33,8 @@ data class Media(
     val url: String,
     val referer: String? = null,
     val userAgent: String? = null,
+    /** Extra libVLC options, e.g. `:adaptive-maxheight=720`. */
+    val options: List<String> = emptyList(),
 )
 
 object Vlc {
@@ -121,7 +124,12 @@ class VideoPlayer {
                 if (rate != 1f) mp.controls().setRate(rate)
                 if (audioDelayMs != 0L) mp.audio().setDelay(audioDelayMs * 1000)
                 if (subtitleDelayMs != 0L) mp.subpictures().setDelay(subtitleDelayMs * 1000)
+                tracksChanged()
             }
+            // Tracks show up a little after the stream starts; the settings panel and the user's picks follow them
+            override fun elementaryStreamAdded(mp: MediaPlayer, type: TrackType, id: Int) { tracksChanged() }
+            override fun elementaryStreamSelected(mp: MediaPlayer, type: TrackType, id: Int) { tracksVersion++ }
+            override fun mediaPlayerReady(mp: MediaPlayer) { tracksChanged() }
             override fun paused(mp: MediaPlayer) { this@VideoPlayer.playing = false }
             override fun stopped(mp: MediaPlayer) { this@VideoPlayer.playing = false }
             override fun finished(mp: MediaPlayer) { this@VideoPlayer.playing = false; finished = true }
@@ -169,7 +177,9 @@ class VideoPlayer {
 
     fun play(media: Media, startMs: Long = 0) {
         error = null; finished = false; frame = null; positionMs = startMs; lengthMs = 0; seekTarget = -1
+        externalApplied = false
         val opts = buildList {
+            addAll(media.options)
             media.referer?.takeIf { it.isNotBlank() }?.let { add(":http-referrer=$it") }
             media.userAgent?.takeIf { it.isNotBlank() }?.let { add(":http-user-agent=$it") }
             if (startMs > 0) add(":start-time=${startMs / 1000.0}")
@@ -196,9 +206,70 @@ class VideoPlayer {
 
     fun audioTracks(): List<Track> = player.audio().trackDescriptions().map { Track(it.id(), it.description()) }
     fun subtitleTracks(): List<Track> = player.subpictures().trackDescriptions().map { Track(it.id(), it.description()) }
-    fun setAudioTrack(id: Int) { player.audio().setTrack(id) }
-    fun setSubtitleTrack(id: Int) { player.subpictures().setTrack(id) }
-    fun addSubtitle(url: String) { player.subpictures().setSubTitleUri(url) }
+
+    /** Bumps whenever the stream's audio or subtitle tracks change, so the settings panel re-reads them. */
+    var tracksVersion by mutableStateOf(0)
+        private set
+    /** The subtitle file the user (or [autoSubtitle]) loaded from outside the stream, if any. */
+    var externalSub by mutableStateOf<String?>(null)
+        private set
+
+    // The picks are remembered by name and applied again to every new stream: changing quality or source restarts libVLC's track choice.
+    @Volatile private var wantAudio: String? = null
+    @Volatile private var wantSub: String? = null // "" = off
+    @Volatile private var subChosen = false
+    @Volatile private var subAuto = false
+    @Volatile private var externalApplied = false
+
+    private fun tracksChanged() { applyChoices(); tracksVersion++ }
+
+    private fun applyChoices() {
+        // Not on libVLC's event thread: its calls can block there
+        Thread {
+            runCatching {
+                wantAudio?.let { n -> audioTracks().firstOrNull { it.name == n }?.takeIf { it.id != audioTrack() }?.let { player.audio().setTrack(it.id) } }
+                val ext = externalSub
+                if (ext != null) {
+                    if (!externalApplied) { externalApplied = true; player.subpictures().setSubTitleUri(ext) }
+                } else wantSub?.let { n ->
+                    val id = if (n.isEmpty()) -1 else subtitleTracks().firstOrNull { it.name == n }?.id
+                    if (id != null && id != subtitleTrack()) player.subpictures().setTrack(id)
+                }
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    fun setAudioTrack(id: Int) {
+        wantAudio = audioTracks().firstOrNull { it.id == id }?.name
+        player.audio().setTrack(id)
+    }
+    fun setSubtitleTrack(id: Int) {
+        subChosen = true; externalSub = null
+        wantSub = if (id == -1) "" else subtitleTracks().firstOrNull { it.id == id }?.name
+        player.subpictures().setTrack(id)
+        tracksVersion++
+    }
+    fun addSubtitle(url: String) {
+        subChosen = true; externalSub = url; externalApplied = true
+        player.subpictures().setSubTitleUri(url)
+        tracksVersion++
+    }
+
+    /**
+     * Turns subtitles on when the user has not chosen: an English track if the stream has one, else its only track,
+     * else an English file from [external] (language, url). Does nothing once the user picked anything, including Off.
+     */
+    fun autoSubtitle(external: List<Pair<String, String>>) {
+        if (subChosen || subAuto) return
+        val english = Regex("english|\\ben\\b|\\[en", RegexOption.IGNORE_CASE)
+        val embedded = subtitleTracks().filter { it.id != -1 }
+        val pick = embedded.firstOrNull { english.containsMatchIn(it.name) } ?: embedded.singleOrNull()
+        if (pick != null) { subAuto = true; wantSub = pick.name; player.subpictures().setTrack(pick.id); tracksVersion++; return }
+        external.firstOrNull { english.containsMatchIn(it.first) }?.let {
+            subAuto = true; externalSub = it.second; externalApplied = true
+            player.subpictures().setSubTitleUri(it.second); tracksVersion++
+        }
+    }
 
     fun release() {
         released = true

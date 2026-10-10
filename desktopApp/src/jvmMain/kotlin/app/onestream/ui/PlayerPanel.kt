@@ -53,12 +53,13 @@ fun PlayerPanel(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Track lists are read once when the panel opens
-    val audio = remember { runCatching { player.audioTracks() }.getOrDefault(emptyList()) }
-    val embedded = remember { runCatching { player.subtitleTracks() }.getOrDefault(emptyList()) }
-    var audioId by remember { mutableStateOf(runCatching { player.audioTrack() }.getOrDefault(-1)) }
-    var subId by remember { mutableStateOf<Int?>(runCatching { player.subtitleTrack() }.getOrNull()) }
-    var external by remember { mutableStateOf<String?>(null) }
+    // Streams report their tracks a moment after they start, and again after a quality or source change: read them again each time
+    val tracks = player.tracksVersion
+    val audio = remember(tracks) { runCatching { player.audioTracks() }.getOrDefault(emptyList()) }
+    val embedded = remember(tracks) { runCatching { player.subtitleTracks() }.getOrDefault(emptyList()) }
+    val audioId = remember(tracks) { runCatching { player.audioTrack() }.getOrDefault(-1) }
+    val subId = remember(tracks) { runCatching { player.subtitleTrack() }.getOrDefault(-1) }
+    val external = player.externalSub
 
     Column(
         modifier.width(360.dp).heightIn(max = 460.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xF2181818))
@@ -91,13 +92,13 @@ fun PlayerPanel(
 
         Section("Audio") {
             if (audio.isEmpty()) Text("Only one audio track", color = Brand.Muted)
-            audio.forEach { t -> Option(t.name, t.id == audioId) { audioId = t.id; player.setAudioTrack(t.id) } }
+            audio.forEach { t -> Option(t.name, t.id == audioId) { player.setAudioTrack(t.id) } }
         }
 
         Section("Subtitles") {
-            Option("Off", subId == -1 && external == null) { subId = -1; external = null; player.setSubtitleTrack(-1) }
-            embedded.filter { it.id != -1 }.forEach { t -> Option(t.name, subId == t.id && external == null) { subId = t.id; external = null; player.setSubtitleTrack(t.id) } }
-            subs.forEach { f -> Option(f.lang, external == f.url) { external = f.url; player.addSubtitle(f.url) } }
+            Option("Off", subId == -1 && external == null) { player.setSubtitleTrack(-1) }
+            embedded.filter { it.id != -1 }.forEach { t -> Option(t.name, subId == t.id && external == null) { player.setSubtitleTrack(t.id) } }
+            subs.forEach { f -> Option(f.lang, external == f.url) { player.addSubtitle(f.url) } }
             if (embedded.none { it.id != -1 } && subs.isEmpty()) Text("This title has no subtitles", color = Brand.Muted)
             DelayRow("Subtitle delay", player.subtitleDelayMs) { player.setSubtitleDelay(it) }
         }
