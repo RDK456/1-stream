@@ -1,0 +1,6 @@
+{
+  "name": "Blender Open Movies",
+  "pluginClassName": "app.onestream.demo.BlenderPlugin",
+  "version": 1,
+  "apiVersion": 1
+}

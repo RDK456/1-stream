@@ -1,0 +1,12 @@
+1-stream
+Copyright (C) 2026 the 1-stream authors
+
+This program is a modified version of CloudStream
+(https://github.com/recloudstream/cloudstream), Copyright (C) the CloudStream
+contributors, licensed under the GNU General Public License v3.0 (see LICENSE).
+
+Changes: Android modules removed; Windows desktop application, plugin loader
+(JVM jars), repository installer, libVLC-based player, local library and new
+branding added. The `library` and `shared` modules are derived from upstream.
+
+Bundled third-party software: VLC / libVLC (https://www.videolan.org/), LGPL-2.1+.
