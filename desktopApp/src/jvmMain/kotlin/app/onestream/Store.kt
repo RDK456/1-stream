@@ -41,6 +41,10 @@ data class DownloadRecord(
     val at: Long,
 )
 
+/** Where an installed plugin jar came from, so it can be updated from the same repository. */
+@Serializable
+data class InstalledFrom(val repo: String, val version: Int)
+
 @Serializable
 data class StoreData(
     val downloads: List<DownloadRecord> = emptyList(),
@@ -55,6 +59,11 @@ data class StoreData(
     /** Plugin scan results: "id@version@rev" to why it cannot run here ("" = fine). */
     val compat: Map<String, String> = emptyMap(),
     val defaultReposSeeded: Boolean = false,
+    /** Refresh repositories and update installed plugins at start and every few hours. */
+    val autoUpdatePlugins: Boolean = true,
+    /** Jar file name to the repository and version it was installed from. Plugins added by hand are not listed and never auto-update. */
+    val pluginSources: Map<String, InstalledFrom> = emptyMap(),
+    val lastPluginUpdate: Long = 0,
     /** `repoUrl|internalName` of default plugins already dealt with, so one the user removes is not installed again. */
     val defaultInstalled: List<String> = emptyList(),
     /** Converted Android plugin jar name to the SHA-256 of the jar the user approved. */
@@ -82,6 +91,10 @@ class Store(private val file: File) {
 
     /** First run only: adds the default repositories once, so removing one sticks. */
     fun seedDefaultRepos(defaults: List<String>) = update { if (it.defaultReposSeeded) it else it.copy(repos = (it.repos + defaults).distinct(), defaultReposSeeded = true) }
+
+    fun setAutoUpdatePlugins(on: Boolean) = update { it.copy(autoUpdatePlugins = on) }
+    fun recordPlugin(jarName: String, repo: String, version: Int) = update { it.copy(pluginSources = it.pluginSources + (jarName to InstalledFrom(repo, version))) }
+    fun touchPluginUpdate() = update { it.copy(lastPluginUpdate = System.currentTimeMillis()) }
 
     fun markDefaultInstalled(ids: List<String>) = update { it.copy(defaultInstalled = (it.defaultInstalled + ids).distinct()) }
 

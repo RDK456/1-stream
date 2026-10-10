@@ -49,7 +49,7 @@ private fun runApp() = application {
         val data by app.store.data.collectAsState()
         LaunchedEffect(Unit) { window.minimumSize = java.awt.Dimension(420, 320) } // below this nothing fits
         // Plugins are only fetched once the user has read the notice about what plugins are
-        LaunchedEffect(data.noticeAccepted) { if (data.noticeAccepted) app.installDefaultPlugins(DEFAULT_PLUGIN_REPOS) }
+        LaunchedEffect(data.noticeAccepted) { if (data.noticeAccepted) app.startMaintenance(DEFAULT_PLUGIN_REPOS) }
         LocalReduceMotionSnapshot.value = data.reduceMotion
         OneStreamTheme(data.reduceMotion) { App(app, windowState) }
     }

@@ -155,34 +155,122 @@ class AppState(
      * so a plugin the user removes stays removed; a plugin that failed on the network is tried again next time.
      */
     fun installDefaultPlugins(repos: List<String>) {
+        scope.launch(Dispatchers.IO) { runDefaultInstall(repos) }
+    }
+
+    private fun runDefaultInstall(repos: List<String>) {
         if (defaultInstall != null) return
-        scope.launch(Dispatchers.IO) {
-            try {
-                for (repoUrl in repos) {
-                    defaultInstall = ScanState("Reading plugin list", 0, 0)
-                    val index = runCatching { repositories.fetchIndex(repoUrl) }.getOrNull() ?: continue
-                    repoIndexes[repoUrl] = Result.success(index)
-                    val handled = store.data.value.defaultInstalled.toSet()
-                    val todo = index.plugins.filter { "$repoUrl|${it.internalName}" !in handled }
-                    todo.forEachIndexed { i, p ->
-                        defaultInstall = ScanState("Installing plugins", i, todo.size)
-                        if (installOne(repoUrl, p)) store.markDefaultInstalled(listOf("$repoUrl|${p.internalName}"))
-                    }
+        try {
+            for (repoUrl in repos) {
+                defaultInstall = ScanState("Reading plugin list", 0, 0)
+                val index = runCatching { repositories.fetchIndex(repoUrl) }.getOrNull() ?: continue
+                repoIndexes[repoUrl] = Result.success(index)
+                val handled = store.data.value.defaultInstalled.toSet()
+                val todo = index.plugins.filter { "$repoUrl|${it.internalName}" !in handled }
+                todo.forEachIndexed { i, p ->
+                    defaultInstall = ScanState("Installing plugins", i, todo.size)
+                    if (installOne(repoUrl, p)) store.markDefaultInstalled(listOf("$repoUrl|${p.internalName}"))
                 }
-            } finally { defaultInstall = null }
+            }
+        } finally { defaultInstall = null }
+    }
+
+    /** Result of the last repository refresh and plugin update, e.g. "Checked 14:05: 2 updated". */
+    var updateNote by mutableStateOf<String?>(null)
+        private set
+    var updating by mutableStateOf(false)
+        private set
+    private val updateBusy = java.util.concurrent.atomic.AtomicBoolean()
+    private val maintaining = java.util.concurrent.atomic.AtomicBoolean()
+
+    /** At start and every 6 hours: installs default plugins, refreshes repositories and (if switched on) updates installed plugins. */
+    fun startMaintenance(defaults: List<String>) {
+        if (!maintaining.compareAndSet(false, true)) return
+        scope.launch(Dispatchers.IO) {
+            while (true) {
+                runDefaultInstall(defaults)
+                if (store.data.value.autoUpdatePlugins) runAutoUpdate()
+                kotlinx.coroutines.delay(6 * 3_600_000L)
+            }
         }
+    }
+
+    fun updatePluginsNow() { scope.launch(Dispatchers.IO) { runAutoUpdate() } }
+
+    /** Refreshes every repository, then updates each installed plugin whose repository now offers a newer version. */
+    private suspend fun runAutoUpdate() {
+        if (!updateBusy.compareAndSet(false, true)) return
+        updating = true
+        try {
+            val sources = store.data.value.pluginSources
+            val repos = (store.data.value.repos + sources.values.map { it.repo }).distinct()
+            // A repository that is down keeps its last good index
+            coroutineScope {
+                repos.map { u -> async { runCatching { repositories.fetchIndex(u) }.onSuccess { repoIndexes[u] = Result.success(it) } } }.awaitAll()
+            }
+            var updated = 0
+            var failed = 0
+            for ((jarName, from) in sources) {
+                val jar = java.io.File(pluginManager.dir, jarName)
+                if (!jar.exists()) continue
+                val p = repoIndexes[from.repo]?.getOrNull()?.plugins?.firstOrNull { it.internalName + ".jar" == jarName } ?: continue
+                if (p.version <= from.version) continue
+                if (updateOne(from.repo, p, jar)) updated++ else failed++
+            }
+            store.touchPluginUpdate()
+            updateNote = "Checked ${java.time.LocalTime.now().withSecond(0).withNano(0)}: " +
+                (if (updated == 0 && failed == 0) "everything is up to date" else "$updated updated" + if (failed > 0) ", $failed failed" else "")
+        } finally { updating = false; updateBusy.set(false) }
+    }
+
+    /** Fetches and checks the new version first, so a bad download never touches the working plugin; puts the old jar back if the new one will not load. */
+    private fun updateOne(repoUrl: String, p: RepoPlugin, jar: java.io.File): Boolean {
+        val stage = java.nio.file.Files.createTempDirectory("onestream-upd").toFile()
+        try {
+            val fresh = if (p.android) {
+                val bytes = repositories.fetchCs3(repoUrl, p)
+                val why = Cs3.check(bytes)
+                if (why != null) { compat[compatKey(p)] = why; store.mergeCompat(mapOf(compatKey(p) to why)); return false }
+                repositories.installCs3(bytes, p, stage)
+            } else repositories.download(repoUrl, p, stage)
+            val old = jar.readBytes()
+            val oldApproval = store.data.value.approvedPlugins[jar.name]
+            pluginManager.unload(jar)
+            try {
+                fresh.copyTo(jar, overwrite = true)
+                if (p.android) store.approvePlugin(jar.name, app.onestream.update.Updater.sha256(jar))
+                loadJar(jar)
+                if (installed.firstOrNull { it.file == jar }?.error != null) error("new version does not load")
+            } catch (e: Exception) {
+                pluginManager.unload(jar)
+                jar.writeBytes(old)
+                if (oldApproval != null) store.approvePlugin(jar.name, oldApproval)
+                loadJar(jar)
+                return false
+            }
+            store.recordPlugin(jar.name, repoUrl, p.version)
+            return true
+        } catch (e: Exception) {
+            return false
+        } catch (e: OutOfMemoryError) {
+            return false
+        } finally { stage.deleteRecursively() }
     }
 
     /** True when the plugin is settled (installed, already there, or cannot run here); false when a retry is worthwhile. */
     private fun installOne(repoUrl: String, p: RepoPlugin): Boolean {
         if (java.io.File(pluginManager.dir, p.internalName + ".jar").exists()) return true
         try {
-            if (!p.android) { loadJar(repositories.download(repoUrl, p, pluginManager.dir)); return true }
+            if (!p.android) {
+                val jar = repositories.download(repoUrl, p, pluginManager.dir)
+                store.recordPlugin(jar.name, repoUrl, p.version); loadJar(jar); return true
+            }
             val bytes = repositories.fetchCs3(repoUrl, p)
             val why = try { Cs3.check(bytes) } catch (e: OutOfMemoryError) { return false } catch (e: Exception) { e.message ?: "Could not be checked" }
             if (why != null) { compat[compatKey(p)] = why; store.mergeCompat(mapOf(compatKey(p) to why)); return true }
             val jar = repositories.installCs3(bytes, p, pluginManager.dir)
             store.approvePlugin(jar.name, app.onestream.update.Updater.sha256(jar))
+            store.recordPlugin(jar.name, repoUrl, p.version)
             loadJar(jar)
             return true
         } catch (e: app.onestream.plugins.RepoException) {

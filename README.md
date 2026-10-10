@@ -65,6 +65,10 @@ into `%APPDATA%\1-stream\plugins`, or use **Plugins > Open plugins folder**.
 
 On first run, after you accept the notice, 1-stream installs every plugin from `https://raw.githubusercontent.com/RVRBEAST76/allforu-repo/builds/repo.json` that can run on desktop (the list is `DEFAULT_PLUGIN_REPOS` in `Repositories.kt`). Plugins that need the Android app are skipped. Remove any of them and it stays removed. The plugins are downloaded from their authors, not bundled with 1-stream.
 
+### Automatic updates for repositories and plugins
+
+At start and every 6 hours 1-stream re-reads your repositories and, if a plugin it installed has a newer version there, downloads, verifies and swaps it in. A bad download or a version that fails to load never replaces the working one. Toggle it, or press **Check now**, under **Plugins > Installed plugins**. Plugins you dropped in by hand are never updated. Updated Android `.cs3` plugins are re-pinned automatically, so only turn this on for repositories you trust.
+
 ### Discover plugins
 
 **Plugins > Discover plugins** lists everything the added repositories offer. **Scan all repositories** refreshes every

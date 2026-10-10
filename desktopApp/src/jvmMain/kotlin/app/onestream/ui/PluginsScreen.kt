@@ -83,6 +83,7 @@ fun PluginsScreen(app: AppState) {
                 // Windows keeps loaded jars locked, so release the old one first
                 app.pluginManager.unload(File(app.pluginManager.dir, p.internalName + ".jar"))
                 val jar = app.repositories.download(repoUrl, p, app.pluginManager.dir)
+                app.store.recordPlugin(jar.name, repoUrl, p.version)
                 app.loadJar(jar)
             }.onFailure { message = "${p.name}: ${it.message}" }
             busy = null
@@ -106,6 +107,11 @@ fun PluginsScreen(app: AppState) {
                 },
             ) {
                 message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp)) }
+                Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Chip(if (data.autoUpdatePlugins) "Auto-update: on" else "Auto-update: off", data.autoUpdatePlugins) { app.store.setAutoUpdatePlugins(!data.autoUpdatePlugins) }
+                    GhostButton(if (app.updating) "Checking…" else "Check now", { app.updatePluginsNow() }, enabled = !app.updating)
+                    Text(app.updateNote ?: "Repositories and plugins refresh at start and every 6 hours.", color = Brand.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                }
                 if (app.installed.isEmpty()) Text("No plugins installed. Add a repository below, or drop a plugin .jar into the folder.", color = Brand.Muted)
                 app.installed.forEachIndexed { i, p ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -250,6 +256,7 @@ fun PluginsScreen(app: AppState) {
                             app.pluginManager.unload(File(app.pluginManager.dir, c.plugin.internalName + ".jar"))
                             val jar = app.repositories.installCs3(c.bytes, c.plugin, app.pluginManager.dir)
                             app.store.approvePlugin(jar.name, Updater.sha256(jar))
+                            app.store.recordPlugin(jar.name, c.repoUrl, c.plugin.version)
                             app.loadJar(jar)
                         }.onFailure { message = "${c.plugin.name}: ${it.message}" }
                         busy = null
