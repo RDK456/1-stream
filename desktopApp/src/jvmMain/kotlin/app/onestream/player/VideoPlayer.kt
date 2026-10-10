@@ -127,13 +127,48 @@ class VideoPlayer {
             override fun finished(mp: MediaPlayer) { this@VideoPlayer.playing = false; finished = true }
             override fun error(mp: MediaPlayer) { this@VideoPlayer.playing = false; error = "This stream could not be played." }
             override fun buffering(mp: MediaPlayer, newCache: Float) { buffering = newCache < 100f }
-            override fun timeChanged(mp: MediaPlayer, newTime: Long) { positionMs = newTime }
-            override fun lengthChanged(mp: MediaPlayer, newLength: Long) { lengthMs = newLength }
+            override fun timeChanged(mp: MediaPlayer, newTime: Long) { acceptTime(newTime) }
+            override fun lengthChanged(mp: MediaPlayer, newLength: Long) { if (newLength > 0) lengthMs = newLength }
         })
     }
 
+    @Volatile private var seekTarget = -1L
+    @Volatile private var seekUntil = 0L
+    @Volatile private var lastTimeEvent = 0L
+    @Volatile private var released = false
+
+    /** After a seek libVLC keeps reporting the old position for a moment; those would make the bar jump back and forth. */
+    private fun acceptTime(t: Long) {
+        lastTimeEvent = System.currentTimeMillis()
+        if (lastTimeEvent < seekUntil && kotlin.math.abs(t - seekTarget) > 2500) return
+        positionMs = t
+    }
+
+    // Some streams (HLS especially) never send a length event, and a quiet stream sends few time events, so ask directly too.
+    private val poller = Thread {
+        while (!released) {
+            runCatching {
+                val st = player.status()
+                if (lengthMs <= 0) st.length().takeIf { it > 0 }?.let { lengthMs = it }
+                if (System.currentTimeMillis() - lastTimeEvent > 700 && st.isPlaying) st.time().takeIf { it >= 0 }?.let { acceptTime(it) }
+            }
+            // Windows would dim the screen and sleep during a long film otherwise
+            if (player.status().isPlaying && System.currentTimeMillis() - lastWake > 30_000) { lastWake = System.currentTimeMillis(); keepAwake() }
+            Thread.sleep(400)
+        }
+    }.apply { isDaemon = true; start() }
+    private var lastWake = 0L
+
+    private interface Kernel32 : com.sun.jna.Library { fun SetThreadExecutionState(flags: Int): Int }
+    private fun keepAwake() {
+        runCatching {
+            // ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED: resets the idle timers once; repeated every 30 s while playing
+            com.sun.jna.Native.load("kernel32", Kernel32::class.java).SetThreadExecutionState(0x00000001 or 0x00000002)
+        }
+    }
+
     fun play(media: Media, startMs: Long = 0) {
-        error = null; finished = false; frame = null; positionMs = startMs; lengthMs = 0
+        error = null; finished = false; frame = null; positionMs = startMs; lengthMs = 0; seekTarget = -1
         val opts = buildList {
             media.referer?.takeIf { it.isNotBlank() }?.let { add(":http-referrer=$it") }
             media.userAgent?.takeIf { it.isNotBlank() }?.let { add(":http-user-agent=$it") }
@@ -144,7 +179,10 @@ class VideoPlayer {
     }
 
     fun togglePause() = player.controls().let { if (player.status().isPlaying) it.pause() else it.play() }
-    fun seekTo(ms: Long) { positionMs = ms; player.controls().setTime(ms) }
+    fun seekTo(ms: Long) {
+        seekTarget = ms; seekUntil = System.currentTimeMillis() + 1500
+        positionMs = ms; player.controls().setTime(ms)
+    }
     fun setVolume(percent: Int) { player.audio().setVolume(percent.coerceIn(0, 200)) }
 
     fun changeSpeed(r: Float) { rate = r; player.controls().setRate(r) }
@@ -163,6 +201,7 @@ class VideoPlayer {
     fun addSubtitle(url: String) { player.subpictures().setSubTitleUri(url) }
 
     fun release() {
+        released = true
         Thread {
             runCatching { player.controls().stop() }
             runCatching { player.release() }

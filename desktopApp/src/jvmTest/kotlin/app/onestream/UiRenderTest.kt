@@ -108,7 +108,9 @@ class UiRenderTest {
             press(androidx.compose.ui.input.key.Key.H)
             assertTrue(render("7c-player-shortcuts", scene, 1_000) > 5_000)
             press(androidx.compose.ui.input.key.Key.H)
-            val size = render("7-player", scene, 20_000)
+            var size = render("7-player", scene, 20_000)
+            // The trailer streams from the internet; on a slow start give it one more window before failing
+            if (size <= 60_000) size = render("7-player", scene, 20_000)
             println("player screenshot bytes=$size")
             assertTrue(size > 60_000, "player screen should contain decoded video, got $size bytes")
             app.pop()

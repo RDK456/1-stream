@@ -13,6 +13,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.focusable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -61,7 +71,16 @@ fun App(app: AppState, windowState: WindowState) {
 
 @Composable
 private fun Content(app: AppState, windowState: WindowState, noticeAccepted: Boolean) {
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Surface(
+        Modifier.fillMaxSize().onPreviewKeyEvent { e ->
+            // Ctrl+1 to Ctrl+6 jump between the main tabs; the player has its own keys
+            val n = listOf(Key.One, Key.Two, Key.Three, Key.Four, Key.Five, Key.Six).indexOf(e.key)
+            if (e.type == KeyEventType.KeyDown && e.isCtrlPressed && n in Tab.entries.indices && app.stack.isEmpty()) { app.tab = Tab.entries[n]; true } else false
+        }.focusRequester(focus).focusable(),
+        color = MaterialTheme.colorScheme.background,
+    ) {
         AnimatedContent(
             app.stack.lastOrNull(),
             transitionSpec = {

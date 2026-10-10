@@ -43,7 +43,10 @@ sealed interface Screen {
         val data: String,
         val episodeName: String?,
         val startMs: Long = 0,
-    ) : Screen
+    ) : Screen {
+        /** The episode after this one, if any. Outside the constructor so equality stays cheap along a long chain. */
+        var next: (() -> Play?)? = null
+    }
 }
 
 class AppState(

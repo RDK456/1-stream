@@ -1,6 +1,15 @@
 package app.onestream.ui
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.focusable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,8 +31,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -46,7 +53,6 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -91,6 +97,11 @@ private fun ExtractorLink.userAgent(): String? =
 
 /** Live and broken streams report 0 or a placeholder such as 99999 s; a real title is under a day long. */
 private fun knownLength(ms: Long) = ms in 1 until 86_400_000L
+
+/** An invisible mouse pointer, shown while the controls are hidden. */
+private val BlankCursor = PointerIcon(
+    java.awt.Toolkit.getDefaultToolkit().createCustomCursor(java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB), java.awt.Point(0, 0), "none"),
+)
 
 /** The opening-song skip anime viewers expect. */
 private const val SKIP_SECONDS = 85
@@ -138,6 +149,9 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
     val side = LocalSide.current
     val compact = LocalCompact.current
     val anime = remember(s) { app.api(s.apiName)?.supportedTypes?.any { it.name in ANIME_TYPES } == true }
+    val next = remember(s) { s.next?.invoke() }
+    var countdown by remember(s) { mutableStateOf<Int?>(null) }
+    var autoNext by remember(s) { mutableStateOf(true) }
 
     fun save() {
         val len = player.lengthMs
@@ -231,6 +245,8 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
     LaunchedEffect(volume) { player.setVolume(volume.toInt()) }
     LaunchedEffect(Unit) { focus.requestFocus() }
 
+    // Reading the frame here would redraw all the controls on every video frame; only its presence matters
+    val hasFrame by remember(player) { derivedStateOf { player.frame != null } }
     val controlsVisible = now < controlsUntil || !player.playing || panelOpen || helpOpen
     fun poke() { controlsUntil = System.currentTimeMillis() + 3500 }
     fun fullscreen() {
@@ -240,32 +256,53 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
         if (windowState.placement == WindowPlacement.Fullscreen) windowState.placement = WindowPlacement.Floating
         app.pop()
     }
+    // Replaces this player with the next episode's, so Back still returns to the title page
+    fun goNext() {
+        val n = next ?: return
+        save(); app.stack[app.stack.lastIndex] = n
+    }
+    // At the end of an episode, count down and carry on, unless cancelled
+    LaunchedEffect(player.finished, autoNext) {
+        if (player.finished && next != null && autoNext) {
+            for (n in 5 downTo 1) { countdown = n; delay(1000) }
+            countdown = null; goNext()
+        } else countdown = null
+    }
 
     Box(
-        Modifier.fillMaxSize().background(Color.Black).focusRequester(focus)
+        Modifier.fillMaxSize().background(Color.Black)
+            .pointerHoverIcon(if (!controlsVisible && player.playing) BlankCursor else PointerIcon.Default)
             .pointerInput(Unit) {
-                // Any pointer movement or press shows the controls
+                // Any pointer movement or press shows the controls and takes keyboard focus back
                 awaitPointerEventScope {
                     while (true) {
-                        awaitPointerEvent(PointerEventPass.Initial)
+                        val ev = awaitPointerEvent(PointerEventPass.Initial)
                         poke()
+                        if (ev.type == PointerEventType.Press) runCatching { focus.requestFocus() }
                     }
                 }
             }
-            .onKeyEvent { e ->
-                if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
+            // Preview, so a focused button inside never swallows a shortcut
+            .onPreviewKeyEvent { e ->
+                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 poke()
                 val big = SKIP_SECONDS * 1000L
                 when (e.key) {
                     Key.Spacebar, Key.K -> { player.togglePause(); say(if (player.playing) "Pause" else "Play"); true }
                     Key.F, Key.F11 -> { fullscreen(); true }
-                    Key.Escape -> { if (helpOpen) helpOpen = false else if (panelOpen) panelOpen = false else back(); true }
+                    Key.Escape -> {
+                        // One step at a time: help, panel, full screen, then leave the player
+                        if (helpOpen) helpOpen = false else if (panelOpen) panelOpen = false
+                        else if (windowState.placement == WindowPlacement.Fullscreen) windowState.placement = WindowPlacement.Floating else back()
+                        true
+                    }
                     Key.DirectionRight, Key.L -> { seekBy(if (e.isShiftPressed) big else 10_000); true }
                     Key.DirectionLeft, Key.J -> { seekBy(if (e.isShiftPressed) -big else -10_000); true }
                     Key.DirectionUp -> { setVol(volume + 5); true }
                     Key.DirectionDown -> { setVol(volume - 5); true }
                     Key.M -> { player.changeMute(!player.muted); say(if (player.muted) "Muted" else "Sound on"); true }
                     Key.S -> { seekBy(big); true }
+                    Key.N -> { if (next != null) goNext() else say("No next episode"); true }
                     Key.Period -> { stepSpeed(+1); true }
                     Key.Comma -> { stepSpeed(-1); true }
                     Key.C -> { cycle(player.subtitleTracks(), player.subtitleTrack(), "Subtitles") { player.setSubtitleTrack(it) }; true }
@@ -278,21 +315,17 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
                         if (d >= 0 && knownLength(player.lengthMs)) { player.seekTo(player.lengthMs * d / 10); say("${d * 10}%"); true } else false
                     }
                 }
-            },
+            }
+            // Without a focus target the shortcuts above never receive a key
+            .focusRequester(focus).focusable(),
     ) {
-        player.frame?.let {
-            Image(
-                it, null,
-                Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, null) { if (panelOpen) panelOpen = false else player.togglePause(); poke() },
-                contentScale = ContentScale.Fit,
-            )
-        }
+        VideoFrame(player, onTap = { if (panelOpen) panelOpen = false else player.togglePause(); poke() }, onDoubleTap = { fullscreen() })
         val err = player.error ?: failure.takeIf { links.isEmpty() && !searching }
         when {
             err != null -> Message(err, "Try another source from the settings panel, or go back.", isError = true)
             links.isEmpty() && searching -> Loading(label = "Finding sources…")
             links.isEmpty() -> Message("No playable sources found", "The provider returned no links for this title.", isError = true)
-            player.frame == null || player.buffering -> Loading(label = if (player.frame == null) "Starting…" else "Buffering…")
+            !hasFrame || player.buffering -> Loading(label = if (!hasFrame) "Starting…" else "Buffering…")
         }
 
         // Short confirmation of the last keyboard or button action
@@ -322,15 +355,17 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
                 ) {
                     val len = player.lengthMs.coerceAtLeast(1)
                     val known = knownLength(player.lengthMs)
-                    // Red scrubber with the time left on the right, as Netflix does
+                    // Time played on the left, red scrubber, time left on the right
+                    val pos = dragging?.let { (it * len).toLong() } ?: player.positionMs
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Text(formatTime(pos.coerceAtLeast(0)), color = Color.White, fontWeight = FontWeight.Medium, maxLines = 1)
                         Scrubber(
-                            dragging ?: (player.positionMs.toFloat() / len).coerceIn(0f, 1f), known, Modifier.weight(1f),
+                            dragging ?: (player.positionMs.toFloat() / len).coerceIn(0f, 1f), known, dragging == null, Modifier.weight(1f),
                             onChange = { dragging = it; poke() },
-                            onDone = { dragging?.let { player.seekTo((it * len).toLong()) }; dragging = null },
+                            onDone = { dragging?.let { player.seekTo((it * player.lengthMs.coerceAtLeast(1)).toLong()) }; dragging = null },
                         )
                         Text(
-                            if (known) formatTime((len - (dragging?.let { (it * len).toLong() } ?: player.positionMs)).coerceAtLeast(0)) else "LIVE",
+                            if (known) "−" + formatTime((len - pos).coerceAtLeast(0)) else "LIVE",
                             color = Color.White, fontWeight = FontWeight.Medium, maxLines = 1,
                         )
                     }
@@ -338,12 +373,10 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
                         IconBtn({ player.togglePause() }, 48.dp) { Glyph(if (player.playing) IconKind.Pause else IconKind.Play, Color.White, 32.dp) }
                         SeekBtn(false) { seekBy(-10_000) }
                         SeekBtn(true) { seekBy(10_000) }
+                        if (next != null) IconBtn(::goNext, 44.dp) { Glyph(IconKind.Next, Color.White, 28.dp) }
                         if (!compact) {
-                            IconBtn({ player.changeMute(!player.muted) }, 40.dp) { Glyph(IconKind.Volume, if (player.muted) Brand.Muted else Color.White, 24.dp) }
-                            Slider(
-                                volume.coerceAtMost(100f), { setVol(it) }, valueRange = 0f..100f, modifier = Modifier.width(100.dp),
-                                colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.3f)),
-                            )
+                            IconBtn({ player.changeMute(!player.muted) }, 40.dp) { Glyph(if (player.muted) IconKind.VolumeOff else IconKind.Volume, Color.White, 26.dp) }
+                            VolumeBar((volume / 100f).coerceIn(0f, 1f), Modifier.width(100.dp)) { setVol(it * 100f) }
                         }
                         Text(
                             listOfNotNull(s.title, s.episodeName).joinToString("  ·  "), Modifier.weight(1f).padding(horizontal = 10.dp),
@@ -353,8 +386,8 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
                             player.rate.toString().removeSuffix(".0") + "×", color = Color.White, fontWeight = FontWeight.Bold,
                             modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { player.changeSpeed(1f); say("Speed normal") }.pointerHoverIcon(PointerIcon.Hand).padding(8.dp),
                         )
-                        IconBtn({ panelOpen = !panelOpen }, 44.dp) { Glyph(IconKind.Settings, if (panelOpen) Brand.Red else Color.White, 26.dp) }
-                        IconBtn(::fullscreen, 44.dp) { Glyph(IconKind.Fullscreen, Color.White, 26.dp) }
+                        IconBtn({ panelOpen = !panelOpen }, 44.dp) { Glyph(IconKind.Settings, if (panelOpen) Brand.Red else Color.White, 28.dp) }
+                        IconBtn(::fullscreen, 44.dp) { Glyph(if (windowState.placement == WindowPlacement.Fullscreen) IconKind.FullscreenExit else IconKind.Fullscreen, Color.White, 28.dp) }
                     }
                 }
                 if (panelOpen) PlayerPanel(
@@ -375,7 +408,25 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
             "Skip ${SKIP_SECONDS}s", Modifier.align(Alignment.BottomEnd).padding(end = side, bottom = if (controlsVisible) 124.dp else 56.dp),
         ) { seekBy(SKIP_SECONDS * 1000L) }
 
+        countdown?.let { n ->
+            Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 150.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                SkipPill("Next episode in $n", Modifier) { goNext() }
+                GhostButton("Cancel", { autoNext = false })
+            }
+        }
+
         if (helpOpen) ShortcutHelp(Modifier.align(Alignment.Center)) { helpOpen = false }
+    }
+}
+
+/** The picture. Alone in its own scope so a new video frame redraws only this, not the controls. */
+@Composable
+private fun VideoFrame(player: VideoPlayer, onTap: () -> Unit, onDoubleTap: () -> Unit) {
+    val tap by rememberUpdatedState(onTap)
+    val double by rememberUpdatedState(onDoubleTap)
+    val f = player.frame
+    Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onDoubleTap = { double() }, onTap = { tap() }) }) {
+        if (f != null) Image(f, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
     }
 }
 
@@ -401,18 +452,22 @@ private fun SeekBtn(forward: Boolean, onClick: () -> Unit) = IconBtn(onClick, 44
 
 /** Thin red bar that thickens on hover and shows a round handle; click or drag to seek. */
 @Composable
-private fun Scrubber(fraction: Float, enabled: Boolean, modifier: Modifier, onChange: (Float) -> Unit, onDone: () -> Unit) {
+private fun Scrubber(fraction: Float, enabled: Boolean, smooth: Boolean, modifier: Modifier, onChange: (Float) -> Unit, onDone: () -> Unit) {
     var w by remember { mutableStateOf(1) }
     val src = remember { MutableInteractionSource() }
     val hover by src.hoverAmount()
-    val f = fraction.coerceIn(0f, 1f)
+    // Position arrives a few times a second; gliding between the updates stops the bar from stepping
+    val f by animateFloatAsState(fraction.coerceIn(0f, 1f), if (smooth) tween(450, easing = LinearEasing) else snap(), label = "scrub")
+    // The gesture blocks outlive recompositions, so they must call the newest lambdas
+    val change by rememberUpdatedState(onChange)
+    val done by rememberUpdatedState(onDone)
     Box(
         modifier.height(24.dp).onSizeChanged { w = it.width.coerceAtLeast(1) }.hoverable(src)
-            .pointerInput(enabled) { if (enabled) detectTapGestures { onChange((it.x / w).coerceIn(0f, 1f)); onDone() } }
+            .pointerInput(enabled) { if (enabled) detectTapGestures { change((it.x / w).coerceIn(0f, 1f)); done() } }
             .pointerInput(enabled) {
                 if (enabled) detectDragGestures(
-                    onDragStart = { onChange((it.x / w).coerceIn(0f, 1f)) }, onDragEnd = onDone, onDragCancel = onDone,
-                ) { c, _ -> c.consume(); onChange((c.position.x / w).coerceIn(0f, 1f)) }
+                    onDragStart = { change((it.x / w).coerceIn(0f, 1f)) }, onDragEnd = { done() }, onDragCancel = { done() },
+                ) { c, _ -> c.consume(); change((c.position.x / w).coerceIn(0f, 1f)) }
             }
             .pointerHoverIcon(PointerIcon.Hand),
         contentAlignment = Alignment.CenterStart,
@@ -424,17 +479,38 @@ private fun Scrubber(fraction: Float, enabled: Boolean, modifier: Modifier, onCh
     }
 }
 
+/** Slim white volume bar with a round handle; click or drag. [value] is 0..1. */
+@Composable
+private fun VolumeBar(value: Float, modifier: Modifier, onChange: (Float) -> Unit) {
+    var w by remember { mutableStateOf(1) }
+    val change by rememberUpdatedState(onChange)
+    Box(
+        modifier.height(24.dp).onSizeChanged { w = it.width.coerceAtLeast(1) }
+            .pointerInput(Unit) { detectTapGestures { change((it.x / w).coerceIn(0f, 1f)) } }
+            .pointerInput(Unit) { detectDragGestures { c, _ -> c.consume(); change((c.position.x / w).coerceIn(0f, 1f)) } }
+            .pointerHoverIcon(PointerIcon.Hand),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.3f)))
+        Box(Modifier.fillMaxWidth(value).height(4.dp).clip(CircleShape).background(Color.White))
+        Box(Modifier.offset { IntOffset((value * w - 6.dp.toPx()).roundToInt().coerceAtLeast(0), 0) }.size(12.dp).clip(CircleShape).background(Color.White))
+    }
+}
+
 /** Netflix's "Skip Intro" look: dark glass with a white outline. */
 @Composable
 private fun SkipPill(text: String, modifier: Modifier, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val hover by src.hoverAmount()
-    Text(
-        "⏭  $text", color = Color.White, fontWeight = FontWeight.SemiBold,
-        modifier = modifier.clip(RoundedCornerShape(4.dp)).background(Color.Black.copy(alpha = 0.55f + 0.25f * hover))
+    Row(
+        modifier.clip(RoundedCornerShape(4.dp)).background(Color.Black.copy(alpha = 0.55f + 0.25f * hover))
             .border(1.dp, Color.White.copy(alpha = 0.7f + 0.3f * hover), RoundedCornerShape(4.dp))
             .clickable(src, null, onClick = onClick).pointerHoverIcon(PointerIcon.Hand).padding(horizontal = 18.dp, vertical = 10.dp),
-    )
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(text, color = Color.White, fontWeight = FontWeight.SemiBold)
+        Glyph(IconKind.Play, Color.White, 18.dp)
+    }
 }
 
 private val SHORTCUTS = listOf(
@@ -442,6 +518,7 @@ private val SHORTCUTS = listOf(
     "← / J, → / L" to "Back or forward 10 s",
     "Shift + ← / →" to "Back or forward $SKIP_SECONDS s",
     "S" to "Skip $SKIP_SECONDS s",
+    "N" to "Next episode",
     "↑ / ↓" to "Volume up or down",
     "M" to "Mute",
     ", and ." to "Slower or faster",

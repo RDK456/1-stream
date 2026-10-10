@@ -138,9 +138,14 @@ private fun DetailsContent(app: AppState, s: Screen.Details, r: LoadResponse) {
 
     var dl by remember { mutableStateOf<PlayItem?>(null) }
 
-    fun play(item: PlayItem, startMs: Long = 0) = app.push(
-        Screen.Play(s.apiName, s.url, r.name, r.posterUrl, item.data, item.title.takeIf { items.size > 1 }, startMs)
-    )
+    fun playOf(item: PlayItem, startMs: Long = 0): Screen.Play {
+        val p = Screen.Play(s.apiName, s.url, r.name, r.posterUrl, item.data, item.title.takeIf { items.size > 1 }, startMs)
+        // Built on demand, so a long series does not create hundreds of screens up front
+        val i = items.indexOf(item)
+        if (i >= 0 && i + 1 < items.size) p.next = { playOf(items[i + 1]) }
+        return p
+    }
+    fun play(item: PlayItem, startMs: Long = 0) = app.push(playOf(item, startMs))
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
         item {
@@ -162,17 +167,19 @@ private fun DetailsContent(app: AppState, s: Screen.Details, r: LoadResponse) {
                             val resume = history?.takeIf { it.positionMs > 5_000 }
                             val resumeItem = resume?.let { h -> items.firstOrNull { it.data == h.data } }
                             if (resume != null && resumeItem != null) {
-                                GradientButton("▶  Resume ${resume.episodeName?.let { "$it · " } ?: ""}${formatTime(resume.positionMs)}", { play(resumeItem, resume.positionMs) })
-                                GhostButton("Start over", { play(resumeItem) })
+                                GradientButton("Resume ${resume.episodeName?.let { "$it · " } ?: ""}${formatTime(resume.positionMs)}", { play(resumeItem, resume.positionMs) }, icon = IconKind.Play)
+                                GhostButton("Start over", { play(resumeItem) }, icon = IconKind.Replay)
                             } else if (items.isNotEmpty()) {
-                                GradientButton(if (items.size == 1) "▶  Play" else "▶  Play first episode", { play(items.first()) })
+                                GradientButton(if (items.size == 1) "Play" else "Play first episode", { play(items.first()) }, icon = IconKind.Play)
                             } else {
                                 Text("Nothing to play yet", color = Brand.Muted)
                             }
-                            GhostButton(if (bookmarked) "✓  In library" else "＋  Add to library", {
-                                app.store.toggleBookmark(Bookmark(r.name, s.url, s.apiName, r.posterUrl))
-                            })
-                            if (items.size == 1) GhostButton("⤓  Download", { dl = items.first() })
+                            GhostButton(
+                                if (bookmarked) "In library" else "Add to library",
+                                { app.store.toggleBookmark(Bookmark(r.name, s.url, s.apiName, r.posterUrl)) },
+                                icon = if (bookmarked) IconKind.Check else IconKind.Add,
+                            )
+                            if (items.size == 1) GhostButton("Download", { dl = items.first() }, icon = IconKind.Download)
                         }
                     }
                 }
@@ -214,7 +221,7 @@ private fun DetailsContent(app: AppState, s: Screen.Details, r: LoadResponse) {
                         }
                     }
                     if (h != null) Text(formatTime(h.positionMs), color = Brand.Muted, style = MaterialTheme.typography.labelMedium)
-                    GhostButton("⤓", { dl = ep })
+                    GhostButton("", { dl = ep }, icon = IconKind.Download)
                     Box(Modifier.graphicsLayer { alpha = 0.35f + 0.65f * hover }) { Glyph(IconKind.Play, Brand.Red, 20.dp) }
                 }
             }

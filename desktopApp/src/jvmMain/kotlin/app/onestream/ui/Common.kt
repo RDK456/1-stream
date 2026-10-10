@@ -14,7 +14,12 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -63,6 +68,34 @@ fun Loading(modifier: Modifier = Modifier.fillMaxSize(), label: String? = null) 
                 drawArc(Brand.Gradient, 0f, 100f, false, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), style = Stroke(w, cap = StrokeCap.Round))
             }
             if (label != null) Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** A grey block with a light band sweeping across it: the placeholder shown while content loads. */
+@Composable
+fun Modifier.shimmer(): Modifier {
+    val reduce = LocalReduceMotion.current
+    val sweep by rememberInfiniteTransition(label = "shimmer").animateFloat(-0.5f, 1.5f, infiniteRepeatable(tween(1500, easing = LinearEasing)), label = "sweep")
+    return drawBehind {
+        drawRect(Color(0xFF232323))
+        if (!reduce) drawRect(Brush.horizontalGradient(listOf(Color.Transparent, Color(0x22FFFFFF), Color.Transparent), startX = (sweep - 0.3f) * size.width, endX = (sweep + 0.3f) * size.width))
+    }
+}
+
+/** What Home looks like before its rows arrive: a billboard block and two rows of poster blocks. */
+@Composable
+fun HomeSkeleton(posterW: Dp, hero: Boolean = true) {
+    val side = LocalSide.current
+    Column(Modifier.fillMaxWidth()) {
+        if (hero) Box(Modifier.fillMaxWidth().height(300.dp).shimmer())
+        repeat(2) {
+            Column(Modifier.padding(top = 18.dp)) {
+                Box(Modifier.padding(start = side).width(170.dp).height(20.dp).clip(RoundedCornerShape(4.dp)).shimmer())
+                LazyRow(Modifier.padding(top = 14.dp), contentPadding = PaddingValues(horizontal = side), horizontalArrangement = Arrangement.spacedBy(8.dp), userScrollEnabled = false) {
+                    items(10) { Box(Modifier.width(posterW).aspectRatio(2f / 3f).clip(RoundedCornerShape(4.dp)).shimmer()) }
+                }
+            }
         }
     }
 }

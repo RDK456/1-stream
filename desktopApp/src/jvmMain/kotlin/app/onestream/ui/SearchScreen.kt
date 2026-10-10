@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed as rowItemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -254,28 +255,43 @@ private fun Browse(app: AppState, providers: List<MainAPI>, typeOk: (com.lagrado
         rows = collected.toList()
     }
     val list = rows?.map { (p, row) -> p to HomePageList(row.name, row.list.filter { typeOk(it.type) }, row.isHorizontalImages) }?.filter { it.second.list.isNotEmpty() }
-    when {
-        list == null -> Loading(label = "Loading ${apis.joinToString { it.name }}…")
-        list.isEmpty() -> Message(error ?: "Nothing to show", isError = error != null)
-        else -> BoxWithConstraints(Modifier.fillMaxSize()) {
-            // About 190dp per poster, with a partly visible last one to show that the row scrolls
-            val posterW = (maxWidth - side) / (maxWidth / 190.dp).coerceIn(2.5f, 8.5f) - 8.dp
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 40.dp)) {
-                val featured = list.flatMap { it.second.list }.filter { it.posterUrl != null }.distinctBy { it.url }.take(5)
-                if (featured.isNotEmpty()) item { Billboard(app, featured, maxWidth) }
-                items(list) { (provider, row) ->
-                    Column(Modifier.padding(top = 10.dp)) {
-                        Row(Modifier.padding(horizontal = side), verticalAlignment = Alignment.Bottom) {
-                            Text(row.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                            if (apis.size > 1) Text(provider, Modifier.padding(start = 10.dp, bottom = 2.dp), color = Brand.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1)
-                        }
-                        // vertical padding leaves room for the hovered poster to grow
-                        LazyRow(contentPadding = PaddingValues(horizontal = side, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            rowItemsIndexed(row.list) { i, r ->
-                                PosterCard(r.name, r.posterUrl, modifier = Modifier.width(posterW), index = i) {
-                                    app.push(Screen.Details(r.apiName, r.url))
-                                }
-                            }
+    val data by app.store.data.collectAsState()
+    // Started but not finished, newest first
+    val resume = data.history.filter { it.durationMs > 0 && it.positionMs > 15_000 && it.positionMs < it.durationMs * 0.95 }.take(15)
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // About 190dp per poster, with a partly visible last one to show that the row scrolls
+        val posterW = (maxWidth - side) / (maxWidth / 190.dp).coerceIn(2.5f, 8.5f) - 8.dp
+        val featured = list?.flatMap { it.second.list }?.filter { it.posterUrl != null }?.distinctBy { it.url }?.take(5).orEmpty()
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 40.dp)) {
+            if (featured.isNotEmpty()) item {
+                Billboard(app, featured, maxWidth) {
+                    list?.flatMap { it.second.list }?.randomOrNull()?.let { app.push(Screen.Details(it.apiName, it.url)) }
+                }
+            }
+            if (resume.isNotEmpty()) item {
+                PosterShelf("Continue watching", null) {
+                    rowItemsIndexed(resume) { i, h ->
+                        PosterCard(
+                            h.name, h.posterUrl, subtitle = h.episodeName ?: "${formatTime(h.durationMs - h.positionMs)} left",
+                            progress = h.positionMs.toFloat() / h.durationMs, modifier = Modifier.width(posterW), index = i,
+                        ) { app.push(Screen.Play(h.apiName, h.url, h.name, h.posterUrl, h.data, h.episodeName, h.positionMs)) }
+                    }
+                }
+            }
+            if (data.bookmarks.isNotEmpty()) item {
+                PosterShelf("My list", null) {
+                    rowItemsIndexed(data.bookmarks) { i, b ->
+                        PosterCard(b.name, b.posterUrl, modifier = Modifier.width(posterW), index = i) { app.push(Screen.Details(b.apiName, b.url)) }
+                    }
+                }
+            }
+            when {
+                list == null -> item { HomeSkeleton(posterW, hero = resume.isEmpty() && data.bookmarks.isEmpty()) }
+                list.isEmpty() -> item { Message(error ?: "Nothing to show", isError = error != null, modifier = Modifier.fillMaxWidth().height(240.dp)) }
+                else -> items(list) { (provider, row) ->
+                    PosterShelf(row.name, provider.takeIf { apis.size > 1 }) {
+                        rowItemsIndexed(row.list) { i, r ->
+                            PosterCard(r.name, r.posterUrl, modifier = Modifier.width(posterW), index = i) { app.push(Screen.Details(r.apiName, r.url)) }
                         }
                     }
                 }
@@ -284,9 +300,22 @@ private fun Browse(app: AppState, providers: List<MainAPI>, typeOk: (com.lagrado
     }
 }
 
+/** A titled row of posters. The vertical padding leaves room for the hovered poster to grow. */
+@Composable
+private fun PosterShelf(title: String, tag: String?, content: LazyListScope.() -> Unit) {
+    val side = LocalSide.current
+    Column(Modifier.padding(top = 10.dp)) {
+        Row(Modifier.padding(horizontal = side), verticalAlignment = Alignment.Bottom) {
+            Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            if (tag != null) Text(tag, Modifier.padding(start = 10.dp, bottom = 2.dp), color = Brand.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+        }
+        LazyRow(contentPadding = PaddingValues(horizontal = side, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), content = content)
+    }
+}
+
 /** Full-width featured title: art fills the width, fades into the page, big title and two actions bottom left. */
 @Composable
-private fun Billboard(app: AppState, items: List<SearchResponse>, width: androidx.compose.ui.unit.Dp) {
+private fun Billboard(app: AppState, items: List<SearchResponse>, width: androidx.compose.ui.unit.Dp, onSurprise: () -> Unit) {
     var index by remember(items) { mutableStateOf(0) }
     val reduce = LocalReduceMotion.current
     val side = LocalSide.current
@@ -317,8 +346,12 @@ private fun Billboard(app: AppState, items: List<SearchResponse>, width: android
                         Text(item.apiName, color = Brand.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        GradientButton("▶  Watch now", { app.push(Screen.Details(item.apiName, item.url)) })
-                        GhostButton(if (inLibrary) "✓  In library" else "＋  Add to library", { app.store.toggleBookmark(Bookmark(item.name, item.url, item.apiName, item.posterUrl)) })
+                        GradientButton("Watch now", { app.push(Screen.Details(item.apiName, item.url)) }, icon = IconKind.Play)
+                        GhostButton(
+                            if (inLibrary) "In library" else "Add to library", { app.store.toggleBookmark(Bookmark(item.name, item.url, item.apiName, item.posterUrl)) },
+                            icon = if (inLibrary) IconKind.Check else IconKind.Add,
+                        )
+                        if (!compact) GhostButton("Surprise me", onSurprise, icon = IconKind.Shuffle)
                     }
                 }
             }

@@ -11,6 +11,8 @@ Based on [CloudStream](https://github.com/recloudstream/cloudstream) (GPL-3.0). 
 - Search across all installed providers, browse provider home pages, filter by language and type
 - Title pages with episodes, **Library** (add and edit), **History** with resume, and **Downloads** with a quality picker (direct files and HLS, AES-128 supported)
 - Built-in player (libVLC): HLS/DASH/MP4, `Referer` and `User-Agent` passthrough; playback settings for speed, quality, source, audio track, subtitles and delay, volume boost, mute; an 85-second skip for anime; full keyboard control (press `H` in the player)
+- Home shows **Continue watching** and **My list**, loads with shimmer placeholders, and has a **Surprise me** button; `Ctrl+1` to `Ctrl+6` switch tabs
+- Episodes play on to the next one with a cancellable countdown (`N` skips ahead); the pointer hides and Windows stays awake while a video plays; double-click the picture for full screen
 - Plugins are plain JVM jars loaded in isolated class loaders; one broken plugin never takes the app down
 - Plugin repositories are HTTPS JSON indexes; every download is SHA-256 verified before it is installed
 
