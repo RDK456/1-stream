@@ -144,6 +144,8 @@ class VideoPlayer {
     @Volatile private var seekUntil = 0L
     @Volatile private var lastTimeEvent = 0L
     @Volatile private var released = false
+    /** Length read from the stream's playlist by the caller, used while libVLC itself reports none (which would show "LIVE" and lock the bar). */
+    @Volatile var lengthHint = 0L
 
     /** After a seek libVLC keeps reporting the old position for a moment; those would make the bar jump back and forth. */
     private fun acceptTime(t: Long) {
@@ -157,7 +159,7 @@ class VideoPlayer {
         while (!released) {
             runCatching {
                 val st = player.status()
-                if (lengthMs <= 0) st.length().takeIf { it > 0 }?.let { lengthMs = it }
+                if (lengthMs <= 0) (st.length().takeIf { it > 0 } ?: lengthHint.takeIf { it > 0 })?.let { lengthMs = it }
                 if (System.currentTimeMillis() - lastTimeEvent > 700 && st.isPlaying) st.time().takeIf { it >= 0 }?.let { acceptTime(it) }
             }
             // Windows would dim the screen and sleep during a long film otherwise

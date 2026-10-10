@@ -92,6 +92,7 @@ private fun Content(app: AppState, windowState: WindowState, noticeAccepted: Boo
             when (top) {
                 is Screen.Details -> DetailsScreen(app, top)
                 is Screen.Play -> PlayerScreen(app, top, windowState)
+                is Screen.Shelf -> ShelfScreen(app, top)
                 null -> Column(Modifier.fillMaxSize()) {
                     TopBar(app)
                     Box(Modifier.weight(1f).fillMaxWidth()) {

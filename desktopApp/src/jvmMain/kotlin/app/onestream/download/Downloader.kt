@@ -211,6 +211,23 @@ class Downloader(
             return out.distinctBy { it.first }.sortedByDescending { it.first }
         }
 
+        /** Length in ms of an on-demand HLS playlist (master or media; [fetch] loads the first variant of a master), null for live or unreadable ones. */
+        fun hlsDuration(text: String, base: String, fetch: (String) -> String): Long? {
+            var t = text
+            if ("#EXT-X-STREAM-INF" in t) {
+                val lines = t.lines().map { it.trim() }
+                val uri = lines.drop(lines.indexOfFirst { it.startsWith("#EXT-X-STREAM-INF") } + 1).firstOrNull { it.isNotEmpty() && !it.startsWith("#") } ?: return null
+                t = fetch(resolve(base, uri))
+            }
+            if ("#EXT-X-ENDLIST" !in t) return null
+            val secs = Regex("#EXTINF:([0-9.]+)").findAll(t).sumOf { it.groupValues[1].toDouble() }
+            return (secs * 1000).toLong().takeIf { it > 0 }
+        }
+
+        /** Length in ms of a DASH manifest that states `mediaPresentationDuration`, else null. */
+        fun dashDuration(text: String): Long? =
+            Regex("mediaPresentationDuration=\"([^\"]+)\"").find(text)?.let { runCatching { java.time.Duration.parse(it.groupValues[1]).toMillis() }.getOrNull() }?.takeIf { it > 0 }
+
         private fun safe(s: String) = s.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().take(100).ifBlank { "video" }
 
         private fun uniqueFile(dir: File, base: String, ext: String): File {

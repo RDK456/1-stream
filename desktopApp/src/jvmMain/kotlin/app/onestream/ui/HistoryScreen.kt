@@ -93,7 +93,7 @@ private fun HistoryRow(app: AppState, h: HistoryEntry, index: Int) {
                 Box(Modifier.fillMaxWidth(progress).height(4.dp).background(Brand.GradientH))
             }
             Text(
-                (if (done) "Finished" else "${formatTime(h.positionMs)} of ${formatTime(h.durationMs)}") + " · " + ago(h.updatedAt),
+                (if (done) "Finished" else if (h.durationMs > 0) "${formatTime(h.positionMs)} of ${formatTime(h.durationMs)}" else "Watched ${formatTime(h.positionMs)}") + " · " + ago(h.updatedAt),
                 style = MaterialTheme.typography.labelSmall, color = Brand.Muted,
             )
         }

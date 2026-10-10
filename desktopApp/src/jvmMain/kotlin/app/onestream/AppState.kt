@@ -35,6 +35,8 @@ fun compatKey(p: RepoPlugin) = "${p.internalName}@${p.version}@$COMPAT_REV"
 
 sealed interface Screen {
     data class Details(val apiName: String, val url: String) : Screen
+    /** Every title of one Home row, as a grid. */
+    data class Shelf(val title: String, val items: List<com.lagradost.cloudstream3.SearchResponse>) : Screen
     data class Play(
         val apiName: String,
         val url: String,

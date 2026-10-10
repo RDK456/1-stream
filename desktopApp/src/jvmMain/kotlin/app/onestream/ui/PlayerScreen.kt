@@ -155,10 +155,11 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
 
     fun save() {
         val len = player.lengthMs
-        if (!knownLength(len)) return
         val pos = player.positionMs
+        // Streams of unknown length are recorded too once something was actually watched
+        if (!knownLength(len) && pos < 5_000) return
         // Finished watching: store 0 so the next open starts from the beginning
-        val stored = if (pos > len * 0.95) 0 else pos
+        val stored = if (knownLength(len) && pos > len * 0.95) 0 else pos
         app.store.saveProgress(
             HistoryEntry(s.title, s.url, s.apiName, s.posterUrl, s.data, s.episodeName, stored, len)
         )
@@ -224,16 +225,24 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
 
     // The resolutions an HLS stream offers, for the Quality choice
     LaunchedEffect(current) {
-        variants = emptyList()
+        variants = emptyList(); player.lengthHint = 0
         val l = current ?: return@LaunchedEffect
-        if (l.type != ExtractorLinkType.M3U8 && !l.url.substringBefore('?').endsWith(".m3u8", true)) return@LaunchedEffect
-        variants = withContext(Dispatchers.IO) {
+        val path = l.url.substringBefore('?')
+        val hls = l.type == ExtractorLinkType.M3U8 || path.endsWith(".m3u8", true)
+        if (!hls && !path.endsWith(".mpd", true)) return@LaunchedEffect
+        withContext(Dispatchers.IO) {
             runCatching {
-                val b = HttpRequest.newBuilder(URI(l.url)).timeout(Duration.ofSeconds(20)).header("User-Agent", l.userAgent() ?: "Mozilla/5.0")
-                if (l.referer.isNotBlank()) b.header("Referer", l.referer)
-                val text = Repositories.defaultClient().send(b.GET().build(), HttpResponse.BodyHandlers.ofString()).body()
-                Downloader.hlsVariants(text, l.url)
-            }.getOrDefault(emptyList())
+                fun get(u: String): String {
+                    val b = HttpRequest.newBuilder(URI(u)).timeout(Duration.ofSeconds(20)).header("User-Agent", l.userAgent() ?: "Mozilla/5.0")
+                    if (l.referer.isNotBlank()) b.header("Referer", l.referer)
+                    return Repositories.defaultClient().send(b.GET().build(), HttpResponse.BodyHandlers.ofString()).body()
+                }
+                val text = get(l.url)
+                if (hls) {
+                    variants = Downloader.hlsVariants(text, l.url)
+                    Downloader.hlsDuration(text, l.url, ::get)?.let { player.lengthHint = it }
+                } else Downloader.dashDuration(text)?.let { player.lengthHint = it }
+            }
         }
     }
 

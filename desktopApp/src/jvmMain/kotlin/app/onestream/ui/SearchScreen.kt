@@ -8,7 +8,14 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -271,7 +278,7 @@ private fun Browse(app: AppState, providers: List<MainAPI>, typeOk: (com.lagrado
                 }
             }
             if (resume.isNotEmpty()) item {
-                PosterShelf("Continue watching", null) {
+                PosterShelf("Continue watching", null, { app.tab = Tab.History }) {
                     rowItemsIndexed(resume) { i, h ->
                         PosterCard(
                             h.name, h.posterUrl, subtitle = h.episodeName ?: "${formatTime(h.durationMs - h.positionMs)} left",
@@ -281,7 +288,7 @@ private fun Browse(app: AppState, providers: List<MainAPI>, typeOk: (com.lagrado
                 }
             }
             if (data.bookmarks.isNotEmpty()) item {
-                PosterShelf("My list", null) {
+                PosterShelf("My list", null, { app.tab = Tab.Library }) {
                     rowItemsIndexed(data.bookmarks) { i, b ->
                         PosterCard(b.name, b.posterUrl, modifier = Modifier.width(posterW), index = i) { app.push(Screen.Details(b.apiName, b.url)) }
                     }
@@ -291,7 +298,7 @@ private fun Browse(app: AppState, providers: List<MainAPI>, typeOk: (com.lagrado
                 list == null -> item { HomeSkeleton(posterW, hero = resume.isEmpty() && data.bookmarks.isEmpty()) }
                 list.isEmpty() -> item { Message(error ?: "Nothing to show", isError = error != null, modifier = Modifier.fillMaxWidth().height(240.dp)) }
                 else -> items(list) { (provider, row) ->
-                    PosterShelf(row.name, provider.takeIf { apis.size > 1 }) {
+                    PosterShelf(row.name, provider.takeIf { apis.size > 1 }, { app.push(Screen.Shelf(row.name, row.list)) }) {
                         rowItemsIndexed(row.list) { i, r ->
                             PosterCard(r.name, r.posterUrl, modifier = Modifier.width(posterW), index = i) { app.push(Screen.Details(r.apiName, r.url)) }
                         }
@@ -304,15 +311,42 @@ private fun Browse(app: AppState, providers: List<MainAPI>, typeOk: (com.lagrado
 
 /** A titled row of posters. The vertical padding leaves room for the hovered poster to grow. */
 @Composable
-private fun PosterShelf(title: String, tag: String?, content: LazyListScope.() -> Unit) {
+private fun PosterShelf(title: String, tag: String?, onAll: (() -> Unit)? = null, content: LazyListScope.() -> Unit) {
     val side = LocalSide.current
+    val state = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    // A page at a time: most of what is visible, so the last poster seen stays on screen as the next page starts
+    fun page(dir: Int) = scope.launch { state.animateScrollBy(dir * state.layoutInfo.viewportSize.width * 0.8f) }
     Column(Modifier.padding(top = 10.dp)) {
         Row(Modifier.padding(horizontal = side), verticalAlignment = Alignment.Bottom) {
             Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
             if (tag != null) Text(tag, Modifier.padding(start = 10.dp, bottom = 2.dp), color = Brand.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+            Spacer(Modifier.weight(1f))
+            if (onAll != null) Text(
+                "Show all ›", Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClick = onAll).pointerHoverIcon(PointerIcon.Hand).padding(horizontal = 8.dp, vertical = 4.dp),
+                color = Brand.Muted, style = MaterialTheme.typography.labelLarge, maxLines = 1,
+            )
         }
-        LazyRow(contentPadding = PaddingValues(horizontal = side, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), content = content)
+        Box(Modifier.hoverable(src)) {
+            LazyRow(state = state, contentPadding = PaddingValues(horizontal = side, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), content = content)
+            if (hovered && state.canScrollBackward) ShelfArrow("‹", Modifier.align(Alignment.CenterStart), toLeft = true) { page(-1) }
+            if (hovered && state.canScrollForward) ShelfArrow("›", Modifier.align(Alignment.CenterEnd), toLeft = false) { page(1) }
+        }
     }
+}
+
+/** A fade at the shelf edge with a big chevron; clicking pages the row. */
+@Composable
+private fun ShelfArrow(glyph: String, modifier: Modifier, toLeft: Boolean, onClick: () -> Unit) {
+    val fade = listOf(Brand.Ink.copy(alpha = 0.9f), Color.Transparent)
+    Box(
+        modifier.padding(vertical = 14.dp).fillMaxHeight().width(52.dp)
+            .background(Brush.horizontalGradient(if (toLeft) fade else fade.reversed()))
+            .clickable(onClick = onClick).pointerHoverIcon(PointerIcon.Hand),
+        contentAlignment = Alignment.Center,
+    ) { Text(glyph, fontSize = 40.sp, fontWeight = FontWeight.Light, color = Color.White) }
 }
 
 /** Full-width featured title: art fills the width, fades into the page, big title and two actions bottom left. */
