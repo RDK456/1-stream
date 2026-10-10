@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import app.onestream.player.WinFullscreen
 import app.onestream.plugins.DEFAULT_PLUGIN_REPOS
 import app.onestream.plugins.DEFAULT_REPOS
 import app.onestream.ui.App
@@ -45,8 +46,14 @@ private fun runApp() = application {
         app.updates.checkOnStart()
     }
 
-    Window(onCloseRequest = { app.updates.applyOnExit(); exitApplication() }, title = APP_NAME, icon = icon, state = windowState) {
+    // Full screen is a borderless window over the whole monitor, above the taskbar: more reliable than the OS exclusive mode
+    Window(
+        onCloseRequest = { app.updates.applyOnExit(); exitApplication() }, title = APP_NAME, icon = icon, state = windowState,
+    ) {
         val data by app.store.data.collectAsState()
+        LaunchedEffect(app.fullscreen) {
+            runCatching { if (app.fullscreen) WinFullscreen.enter(window) else WinFullscreen.exit(window) }
+        }
         LaunchedEffect(Unit) { window.minimumSize = java.awt.Dimension(420, 320) } // below this nothing fits
         // Plugins are only fetched once the user has read the notice about what plugins are
         LaunchedEffect(data.noticeAccepted) { if (data.noticeAccepted) app.startMaintenance(DEFAULT_PLUGIN_REPOS) }

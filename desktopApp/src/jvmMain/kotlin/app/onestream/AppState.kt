@@ -56,6 +56,8 @@ class AppState(
     val store: Store = Store(AppPaths.data),
     val pluginManager: PluginManager = PluginManager(AppPaths.plugins) { store.isApproved(it) },
 ) {
+    /** The player covers the whole monitor (see Main.kt and WinFullscreen). */
+    var fullscreen by mutableStateOf(false)
     val repositories = Repositories()
     val downloader = app.onestream.download.Downloader(scope, store)
     val updates = app.onestream.update.UpdateController.create(scope, store, AppPaths.root)

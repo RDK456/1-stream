@@ -267,10 +267,10 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
     val controlsVisible = now < controlsUntil || !player.playing || panelOpen || helpOpen
     fun poke() { controlsUntil = System.currentTimeMillis() + 3500 }
     fun fullscreen() {
-        windowState.placement = if (windowState.placement == WindowPlacement.Fullscreen) WindowPlacement.Floating else WindowPlacement.Fullscreen
+        app.fullscreen = !app.fullscreen
     }
     fun back() {
-        if (windowState.placement == WindowPlacement.Fullscreen) windowState.placement = WindowPlacement.Floating
+        app.fullscreen = false
         app.pop()
     }
     // Replaces this player with the next episode's, so Back still returns to the title page
@@ -310,7 +310,7 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
                     Key.Escape -> {
                         // One step at a time: help, panel, full screen, then leave the player
                         if (helpOpen) helpOpen = false else if (panelOpen) panelOpen = false
-                        else if (windowState.placement == WindowPlacement.Fullscreen) windowState.placement = WindowPlacement.Floating else back()
+                        else if (app.fullscreen) app.fullscreen = false else back()
                         true
                     }
                     Key.DirectionRight, Key.L -> { seekBy(if (e.isShiftPressed) big else 10_000); true }
@@ -404,7 +404,7 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
                             modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { player.changeSpeed(1f); say("Speed normal") }.pointerHoverIcon(PointerIcon.Hand).padding(8.dp),
                         )
                         IconBtn({ panelOpen = !panelOpen }, 44.dp) { Glyph(IconKind.Settings, if (panelOpen) Brand.Red else Color.White, 28.dp) }
-                        IconBtn(::fullscreen, 44.dp) { Glyph(if (windowState.placement == WindowPlacement.Fullscreen) IconKind.FullscreenExit else IconKind.Fullscreen, Color.White, 28.dp) }
+                        IconBtn(::fullscreen, 44.dp) { Glyph(if (app.fullscreen) IconKind.FullscreenExit else IconKind.Fullscreen, Color.White, 28.dp) }
                     }
                 }
                 if (panelOpen) PlayerPanel(
@@ -415,7 +415,8 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
                     skipSeconds = SKIP_SECONDS, onSkip = { seekBy(SKIP_SECONDS * 1000L) },
                     onHelp = { panelOpen = false; helpOpen = true },
                     onClose = { panelOpen = false },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = side, bottom = 118.dp),
+                    // The top margin makes the panel scroll inside a short window instead of running off the top
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = side, bottom = 118.dp, top = 12.dp),
                 )
             }
         }

@@ -136,7 +136,7 @@ class VideoPlayer {
             override fun error(mp: MediaPlayer) { this@VideoPlayer.playing = false; error = "This stream could not be played." }
             override fun buffering(mp: MediaPlayer, newCache: Float) { buffering = newCache < 100f }
             override fun timeChanged(mp: MediaPlayer, newTime: Long) { acceptTime(newTime) }
-            override fun lengthChanged(mp: MediaPlayer, newLength: Long) { if (newLength > 0) lengthMs = newLength }
+            override fun lengthChanged(mp: MediaPlayer, newLength: Long) { acceptLength(newLength) }
         })
     }
 
@@ -146,6 +146,12 @@ class VideoPlayer {
     @Volatile private var released = false
     /** Length read from the stream's playlist by the caller, used while libVLC itself reports none (which would show "LIVE" and lock the bar). */
     @Volatile var lengthHint = 0L
+
+    /** The playlist's own length wins over libVLC's, which for some HLS streams starts right and then jumps to nonsense (the bar would flip to LIVE). */
+    private fun acceptLength(v: Long) {
+        if (lengthHint > 0) { lengthMs = lengthHint; return }
+        if (v in 1 until 86_400_000L) lengthMs = v
+    }
 
     /** After a seek libVLC keeps reporting the old position for a moment; those would make the bar jump back and forth. */
     private fun acceptTime(t: Long) {
@@ -159,7 +165,7 @@ class VideoPlayer {
         while (!released) {
             runCatching {
                 val st = player.status()
-                if (lengthMs <= 0) (st.length().takeIf { it > 0 } ?: lengthHint.takeIf { it > 0 })?.let { lengthMs = it }
+                if (lengthMs <= 0 || (lengthHint > 0 && lengthMs != lengthHint)) acceptLength(st.length())
                 if (System.currentTimeMillis() - lastTimeEvent > 700 && st.isPlaying) st.time().takeIf { it >= 0 }?.let { acceptTime(it) }
             }
             // Windows would dim the screen and sleep during a long film otherwise
