@@ -98,7 +98,7 @@ private fun HistoryRow(app: AppState, h: HistoryEntry, index: Int) {
             )
         }
         GradientButton(if (done) "Watch again" else "Resume", { app.push(Screen.Play(h.apiName, h.url, h.name, h.posterUrl, h.data, h.episodeName, if (done) 0 else h.positionMs)) })
-        if (!LocalCompact.current) GhostButton("Details", { app.push(Screen.Details(h.apiName, h.url)) })
+        GhostButton("Details", { app.push(Screen.Details(h.apiName, h.url)) })
         GhostButton("", { app.store.removeHistory(h) }, icon = IconKind.Close)
     }
 }

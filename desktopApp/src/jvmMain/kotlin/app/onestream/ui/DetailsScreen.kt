@@ -33,6 +33,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -193,41 +195,89 @@ private fun DetailsContent(app: AppState, s: Screen.Details, r: LoadResponse) {
                 }
             }
         }
-        if (items.size > 1) {
-            item {
-                Row(Modifier.padding(horizontal = side).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) { SectionHeader("Episodes", trailing = "${shown.size}") }
-                }
-                if (seasons.size > 1) PillTabs(seasons.map { "Season $it" }, seasonIdx, { seasonIdx = it }, Modifier.padding(horizontal = side, vertical = 6.dp))
-            }
-            itemsIndexed(shown) { i, ep ->
-                val src = remember { MutableInteractionSource() }
-                val hover by src.hoverAmount()
-                val h = history?.takeIf { it.data == ep.data && it.positionMs > 5_000 }
-                Row(
-                    Modifier.padding(horizontal = side, vertical = 3.dp).fillMaxWidth().enter(i).hoverLift(src, 1.01f)
-                        .clip(RoundedCornerShape(6.dp)).background(Brand.Panel)
-                        .border(1.dp, lerp(Brand.Line, Brand.Red.copy(alpha = 0.5f), hover), RoundedCornerShape(6.dp))
-                        .clickable(src, null) { play(ep, h?.positionMs ?: 0) }.pointerHoverIcon(PointerIcon.Hand).padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    ProgressRing(if (h != null && h.durationMs > 0) h.positionMs.toFloat() / h.durationMs else 0f, 42.dp, 3.dp) {
-                        Text(ep.episode?.toString() ?: "•", style = MaterialTheme.typography.labelLarge, color = Brand.Red, fontWeight = FontWeight.SemiBold)
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text(ep.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                        ep.description?.let {
-                            Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = Brand.Muted)
+        if (items.size > 1) item {
+            Column(Modifier.padding(top = 8.dp)) {
+                Column(Modifier.padding(horizontal = side)) {
+                    var open by remember { mutableStateOf(false) }
+                    Box {
+                        Row(
+                            Modifier.clickable(enabled = seasons.size > 1) { open = true }.pointerHoverIcon(PointerIcon.Hand),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(Modifier.width(3.dp).height(36.dp).background(Brand.Red))
+                            Column(Modifier.padding(start = 10.dp)) {
+                                Row {
+                                    Text(if (season != null) "Season $season" else "Episodes", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                    if (seasons.size > 1) Text("  ▾", fontSize = 18.sp, color = Brand.Muted)
+                                }
+                                Text("${shown.size} episodes", style = MaterialTheme.typography.labelMedium, color = Brand.Muted)
+                            }
+                        }
+                        DropdownMenu(open, { open = false }) {
+                            seasons.forEachIndexed { i, n -> DropdownMenuItem({ Text("Season $n") }, { seasonIdx = i; open = false }) }
                         }
                     }
-                    if (h != null) Text(formatTime(h.positionMs), color = Brand.Muted, style = MaterialTheme.typography.labelMedium)
-                    GhostButton("", { dl = ep }, icon = IconKind.Download)
-                    Box(Modifier.graphicsLayer { alpha = 0.35f + 0.65f * hover }) { Glyph(IconKind.Play, Brand.Red, 20.dp) }
+                }
+                LazyRow(contentPadding = PaddingValues(horizontal = side, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(shown) { ep ->
+                        val h = history?.takeIf { it.data == ep.data && it.positionMs > 5_000 }
+                        EpisodeCard(ep, h?.let { if (it.durationMs > 0) it.positionMs.toFloat() / it.durationMs else 0f }, { dl = ep }) { play(ep, h?.positionMs ?: 0) }
+                    }
+                }
+            }
+        }
+        r.actors?.takeIf { it.isNotEmpty() }?.let { cast ->
+            item {
+                Column(Modifier.padding(top = 8.dp)) {
+                    Row(Modifier.padding(horizontal = side), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.width(3.dp).height(36.dp).background(Brand.Red))
+                        Column(Modifier.padding(start = 10.dp)) {
+                            Text("Cast", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            Text("The cast behind this title", style = MaterialTheme.typography.labelMedium, color = Brand.Muted)
+                        }
+                    }
+                    LazyRow(contentPadding = PaddingValues(horizontal = side, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(cast.take(30)) { a ->
+                            Column(Modifier.width(124.dp)) {
+                                Box(Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(6.dp)).background(Brand.PanelHi)) {
+                                    a.actor.image?.let { AsyncImage(it, a.actor.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                                }
+                                Text(a.actor.name, Modifier.padding(top = 6.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodySmall)
+                                (a.roleString ?: a.role?.name)?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis, color = Brand.Muted, style = MaterialTheme.typography.labelSmall) }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
     dl?.let { item ->
         DownloadDialog(app, s, item, if (items.size > 1) "${r.name} - ${item.title}" else r.name) { dl = null }
+    }
+}
+/** Movy-style episode tile: still image, number, title, two lines of synopsis, thin progress bar. */
+@Composable
+private fun EpisodeCard(ep: PlayItem, progress: Float?, onDownload: () -> Unit, onPlay: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hover by src.hoverAmount()
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        Modifier.width(300.dp).height(190.dp).hoverLift(src, 1.03f).clip(shape).background(Brand.Panel)
+            .border(1.dp, lerp(Brand.Line, Color.White, hover * 0.6f), shape)
+            .clickable(src, null, onClick = onPlay).pointerHoverIcon(PointerIcon.Hand),
+    ) {
+        ep.posterUrl?.let { AsyncImage(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Transparent, 0.35f to Color.Black.copy(alpha = 0.35f), 1f to Color.Black.copy(alpha = 0.92f))))
+        Box(Modifier.align(Alignment.TopEnd).padding(8.dp).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = 0.55f)).clickable(onClick = onDownload).padding(6.dp)) {
+            Glyph(IconKind.Download, Color.White, 16.dp)
+        }
+        Column(Modifier.align(Alignment.BottomStart).padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(ep.episode?.let { "EPISODE $it" } ?: "EPISODE", fontSize = 10.sp, letterSpacing = 1.sp, color = Brand.Muted, fontWeight = FontWeight.Medium)
+            Text(ep.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
+            ep.description?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = Brand.Muted) }
+        }
+        if (progress != null) Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color(0xFF5A5A5A))) {
+            Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(3.dp).background(Brand.Red))
+        }
     }
 }

@@ -76,6 +76,17 @@ class AppState(
     var railExpanded by mutableStateOf(true)
     val stack = mutableStateListOf<Screen>()
 
+    /** Home search, kept here so it survives opening a title and coming back. */
+    var query by mutableStateOf("")
+    var searched by mutableStateOf(false)
+    var searchResults by mutableStateOf<List<com.lagradost.cloudstream3.SearchResponse>>(emptyList())
+    var searchFailures by mutableStateOf<List<String>>(emptyList())
+    var searchProvider by mutableStateOf(0) // 0 = all
+    /** Home rows already fetched, so returning to Home does not reload them. */
+    var homeKey: List<String>? = null
+    var homeRows by mutableStateOf<List<Pair<String, com.lagradost.cloudstream3.HomePageList>>?>(null)
+    val homeScroll = androidx.compose.foundation.lazy.LazyListState()
+
     var installed by mutableStateOf<List<InstalledPlugin>>(emptyList())
         private set
     var providers by mutableStateOf<List<MainAPI>>(emptyList())

@@ -80,6 +80,7 @@ import app.onestream.plugins.Repositories
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -208,6 +209,11 @@ private fun Playback(app: AppState, s: Screen.Play, windowState: WindowState, pl
     }
 
     LaunchedEffect(s) {
+        if (s.apiName == WEB_API) { // a link pasted by hand: play it as is
+            val l = newExtractorLink("Web", "Web", s.data, if (s.data.substringBefore('?').endsWith(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) { referer = s.url }
+            links.add(l); start(l, s.startMs); searching = false
+            return@LaunchedEffect
+        }
         val api = app.api(s.apiName)
         if (api == null) { failure = "Provider \"${s.apiName}\" is not installed."; searching = false; return@LaunchedEffect }
         val finder = launch(Dispatchers.IO) {

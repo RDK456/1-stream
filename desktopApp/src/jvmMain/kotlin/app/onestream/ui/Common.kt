@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import coil3.compose.AsyncImage
 
@@ -122,13 +123,15 @@ fun PosterCard(
     progress: Float? = null,
     modifier: Modifier = Modifier,
     index: Int = 0,
+    /** When set, a small info button appears on hover that opens the title's details instead of playing. */
+    onInfo: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val src = remember { MutableInteractionSource() }
     val hover by src.hoverAmount()
     val shape = RoundedCornerShape(4.dp)
     Column(
-        modifier.enter(index).zIndex(hover).hoverLift(src, 1.08f).clip(shape).clickable(src, null, onClick = onClick)
+        modifier.zIndex(hover).hoverLift(src, 1.08f).clip(shape).clickable(src, null, onClick = onClick)
             .pointerHoverIcon(PointerIcon.Hand),
     ) {
         Box(
@@ -144,6 +147,12 @@ fun PosterCard(
                     .clip(CircleShape).background(Color.Black.copy(alpha = 0.6f)).border(2.dp, Color.White, CircleShape),
                 contentAlignment = Alignment.Center,
             ) { Glyph(IconKind.Play, Color.White, 22.dp) }
+            if (onInfo != null) Box(
+                Modifier.align(Alignment.TopEnd).padding(6.dp).graphicsLayer { alpha = hover }.size(28.dp)
+                    .clip(CircleShape).background(Color.Black.copy(alpha = 0.7f)).border(1.dp, Color.White, CircleShape)
+                    .clickable(onClick = onInfo).pointerHoverIcon(PointerIcon.Hand),
+                contentAlignment = Alignment.Center,
+            ) { Text("i", fontWeight = FontWeight.Bold, fontSize = 14.sp) }
             if (progress != null) {
                 Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color(0xFF5A5A5A))) {
                     Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(3.dp).background(Brand.Red))

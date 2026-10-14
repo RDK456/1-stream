@@ -125,20 +125,47 @@ class Downloader(
         part(job).copyTo(job.file, overwrite = true); part(job).delete()
     }
 
-    private class Variant(val url: String, val height: Int, val bandwidth: Long)
+    private class Variant(val url: String, val height: Int, val bandwidth: Long, val audio: String? = null)
     private class Seg(val url: String, val key: ByteArray?, val iv: ByteArray)
 
     private suspend fun hls(link: ExtractorLink, job: DownloadJob) {
         job.inBytes = false
         var url = link.url
         var text = text(link, url)
+        var audioUrl: String? = null
         if ("#EXT-X-STREAM-INF" in text) {
-            val variants = variants(text, url)
+            val master = text; val masterUrl = url
+            val variants = variants(master, masterUrl)
             // Closest to the quality the user picked; otherwise the best one
             val pick = (if (link.quality > 0) variants.filter { it.height > 0 }.minByOrNull { abs(it.height - link.quality) } else null)
                 ?: variants.maxByOrNull { it.bandwidth } ?: throw IOException("The playlist has no streams")
             url = pick.url; text = text(link, url)
+            // Many streams keep the sound in its own playlist; without it the saved video is silent
+            audioUrl = pick.audio?.let { audioRendition(master, masterUrl, it) }
         }
+        val (init, segs) = parseMedia(link, url, text)
+        if (init != null) job.file = File(job.file.parentFile, job.file.nameWithoutExtension + ".mp4")
+        val audio = audioUrl?.let { parseMedia(link, it, text(link, it)) }
+        job.total = segs.size.toLong() + (audio?.second?.size ?: 0)
+        val videoPart = part(job)
+        fetchTo(link, videoPart, init, segs, job)
+        if (audio == null) { videoPart.copyTo(job.file, overwrite = true); videoPart.delete(); return }
+        val audioPart = File(job.file.path + ".audio.part")
+        try {
+            fetchTo(link, audioPart, audio.first, audio.second, job)
+            if (!mux(videoPart, audioPart, job.file)) throw IOException("Could not join the sound track into the video (VLC missing?)")
+        } finally { videoPart.delete(); audioPart.delete() }
+    }
+
+    /** The playlist address of the default (else first) audio rendition of [group], or null when it is muxed into the video. */
+    private fun audioRendition(master: String, base: String, group: String): String? {
+        val media = master.lines().map { it.trim() }.filter { it.startsWith("#EXT-X-MEDIA") }.map { attrs(it) }
+            .filter { it["TYPE"] == "AUDIO" && it["GROUP-ID"] == group && it["URI"] != null }
+        val m = media.firstOrNull { it["DEFAULT"] == "YES" } ?: media.firstOrNull() ?: return null
+        return resolve(base, m.getValue("URI"))
+    }
+
+    private suspend fun parseMedia(link: ExtractorLink, url: String, text: String): Pair<String?, List<Seg>> {
         var init: String? = null
         val segs = ArrayList<Seg>()
         val keys = HashMap<String, ByteArray>()
@@ -163,9 +190,11 @@ class Downloader(
             }
         }
         if (segs.isEmpty()) throw IOException("The playlist has no segments")
-        if (init != null) job.file = File(job.file.parentFile, job.file.nameWithoutExtension + ".mp4")
-        job.total = segs.size.toLong()
-        part(job).outputStream().buffered().use { out ->
+        return init to segs
+    }
+
+    private suspend fun fetchTo(link: ExtractorLink, dest: File, init: String?, segs: List<Seg>, job: DownloadJob) {
+        dest.outputStream().buffered().use { out ->
             init?.let { out.write(bytes(link, it)) }
             for (chunk in segs.chunked(4)) {
                 val parts = coroutineScope { chunk.map { s -> async { decrypt(s, bytes(link, s.url)) } }.awaitAll() }
@@ -173,7 +202,21 @@ class Downloader(
                 job.done += chunk.size
             }
         }
-        part(job).copyTo(job.file, overwrite = true); part(job).delete()
+    }
+
+    /** Joins a video-only and an audio-only file into [out] with the VLC that ships with the app (no re-encoding). */
+    private fun mux(video: File, audio: File, out: File): Boolean {
+        val vlc = app.onestream.player.Vlc.findDir()?.let { File(it, "vlc.exe") }?.takeIf { it.isFile } ?: return false
+        val mux = if (out.extension.equals("mp4", true)) "mp4" else "ts"
+        val tmp = File(out.path + ".mux")
+        val p = ProcessBuilder(
+            vlc.path, "-I", "dummy", "--no-repeat", "--no-loop", video.absolutePath, "--input-slave=${audio.toURI()}",
+            "--sout-all", "--sout", "#std{access=file,mux=$mux,dst=${tmp.absolutePath}}", "vlc://quit",
+        ).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
+        if (!p.waitFor(20, java.util.concurrent.TimeUnit.MINUTES)) { p.destroyForcibly(); tmp.delete(); return false }
+        if (p.exitValue() != 0 || tmp.length() < video.length() / 2) { tmp.delete(); return false }
+        tmp.copyTo(out, overwrite = true); tmp.delete()
+        return true
     }
 
     private fun decrypt(s: Seg, data: ByteArray): ByteArray =
@@ -186,7 +229,7 @@ class Downloader(
         for ((i, line) in lines.withIndex()) if (line.startsWith("#EXT-X-STREAM-INF")) {
             val a = attrs(line)
             val uri = lines.drop(i + 1).firstOrNull { it.isNotEmpty() && !it.startsWith("#") } ?: continue
-            out += Variant(resolve(base, uri), a["RESOLUTION"]?.substringAfter('x')?.toIntOrNull() ?: 0, a["BANDWIDTH"]?.toLongOrNull() ?: 0)
+            out += Variant(resolve(base, uri), a["RESOLUTION"]?.substringAfter('x')?.toIntOrNull() ?: 0, a["BANDWIDTH"]?.toLongOrNull() ?: 0, a["AUDIO"])
         }
         return out
     }

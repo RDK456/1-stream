@@ -102,18 +102,20 @@ fun SearchScreen(app: AppState) {
     val side = LocalSide.current
 
     val scope = rememberCoroutineScope()
-    var query by remember { mutableStateOf("") }
-    var selected by remember { mutableStateOf(0) } // 0 = all (filtered) providers
+    var query by app::query
+    var selected by app::searchProvider // 0 = all (filtered) providers
     // Kept in the app data, so they survive switching tabs, opening a title and restarting
     val saved by app.store.data.collectAsState()
     val langFilter = saved.filters["homeLang"]
     val typeFilter = saved.filters["homeType"]
     var showFilters by remember { mutableStateOf(false) }
+    var showScrape by remember { mutableStateOf(false) }
+    if (showScrape) ScrapeDialog(app) { showScrape = false }
     val shown = providers.filter { p -> (langFilter == null || p.lang == langFilter) && (typeFilter == null || p.supportedTypes.any { it.name == typeFilter }) }
-    var results by remember { mutableStateOf<List<SearchResponse>>(emptyList()) }
-    var failures by remember { mutableStateOf<List<String>>(emptyList()) }
+    var results by app::searchResults
+    var failures by app::searchFailures
     var loading by remember { mutableStateOf(false) }
-    var searched by remember { mutableStateOf(false) }
+    var searched by app::searched
     val selectedName = shown.getOrNull(selected - 1)?.name
     // Adult results stay hidden unless that type is picked on purpose
     fun typeOk(t: com.lagradost.cloudstream3.TvType?) = if (typeFilter == null) t != com.lagradost.cloudstream3.TvType.NSFW else t?.name == typeFilter
@@ -141,6 +143,7 @@ fun SearchScreen(app: AppState) {
         val active = listOfNotNull(langFilter, typeFilter).size + if (selected > 0) 1 else 0
         Row(Modifier.fillMaxWidth().padding(horizontal = side, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.weight(1f)) { SearchBar(query, { query = it }, ::runSearch) }
+            GhostButton("Paste link", { showScrape = true })
             GhostButton(if (active > 0) "Filters ($active)" else "Filters", { showFilters = !showFilters })
         }
         // The filter panel scrolls on its own so a short window can still reach the results below it
@@ -243,9 +246,11 @@ private fun Browse(app: AppState, providers: List<MainAPI>, typeOk: (com.lagrado
     }
     val side = LocalSide.current
     val key = apis.map { it.name }
-    var rows by remember(key) { mutableStateOf<List<Pair<String, HomePageList>>?>(null) }
+    var rows by app::homeRows
     var error by remember(key) { mutableStateOf<String?>(null) }
     LaunchedEffect(key) {
+        if (app.homeKey == key && rows != null) return@LaunchedEffect // already loaded: back from a title
+        app.homeKey = key
         rows = null; error = null
         val collected = mutableListOf<Pair<String, HomePageList>>()
         withContext(Dispatchers.IO) {
@@ -271,7 +276,7 @@ private fun Browse(app: AppState, providers: List<MainAPI>, typeOk: (com.lagrado
         // About 190dp per poster, with a partly visible last one to show that the row scrolls
         val posterW = (maxWidth - side) / (maxWidth / 190.dp).coerceIn(2.5f, 8.5f) - 8.dp
         val featured = list?.flatMap { it.second.list }?.filter { it.posterUrl != null }?.distinctBy { it.url }?.take(5).orEmpty()
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 40.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), state = app.homeScroll, contentPadding = PaddingValues(bottom = 40.dp)) {
             if (featured.isNotEmpty()) item {
                 Billboard(app, featured, maxWidth) {
                     list?.flatMap { it.second.list }?.randomOrNull()?.let { app.push(Screen.Details(it.apiName, it.url)) }
@@ -283,6 +288,7 @@ private fun Browse(app: AppState, providers: List<MainAPI>, typeOk: (com.lagrado
                         PosterCard(
                             h.name, h.posterUrl, subtitle = h.episodeName ?: "${formatTime(h.durationMs - h.positionMs)} left",
                             progress = h.positionMs.toFloat() / h.durationMs, modifier = Modifier.width(posterW), index = i,
+                            onInfo = { app.push(Screen.Details(h.apiName, h.url)) },
                         ) { app.push(Screen.Play(h.apiName, h.url, h.name, h.posterUrl, h.data, h.episodeName, h.positionMs)) }
                     }
                 }
@@ -382,12 +388,12 @@ private fun Billboard(app: AppState, items: List<SearchResponse>, width: android
                         Text(item.apiName, color = Brand.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        GradientButton("Watch now", { app.push(Screen.Details(item.apiName, item.url)) }, icon = IconKind.Play)
-                        GhostButton(
-                            if (inLibrary) "In library" else "Add to library", { app.store.toggleBookmark(Bookmark(item.name, item.url, item.apiName, item.posterUrl)) },
+                        GradientButton("Play", { app.push(Screen.Details(item.apiName, item.url)) }, icon = IconKind.Play)
+                        GhostButton("More info", { app.push(Screen.Details(item.apiName, item.url)) })
+                        if (!compact) GhostButton(
+                            "", { app.store.toggleBookmark(Bookmark(item.name, item.url, item.apiName, item.posterUrl)) },
                             icon = if (inLibrary) IconKind.Check else IconKind.Add,
                         )
-                        if (!compact) GhostButton("Surprise me", onSurprise, icon = IconKind.Shuffle)
                     }
                 }
             }

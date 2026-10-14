@@ -47,8 +47,9 @@ fun DownloadsScreen(app: AppState) {
         if (jobs.isEmpty() && data.downloads.isEmpty()) item {
             Plate(Modifier.enter(0)) { Text("Nothing downloaded yet. Open a title and press Download, then pick a quality.", color = Brand.Muted) }
         }
-        items(jobs.toList(), key = { it.id }) { JobRow(app, it) }
-        items(data.downloads, key = { it.id }) { RecordRow(app, it) }
+        // A finished job is in both lists for a moment and shares one id, so the keys must differ per list
+        items(jobs.toList(), key = { "job-${it.id}" }) { JobRow(app, it) }
+        items(data.downloads, key = { "rec-${it.id}" }) { RecordRow(app, it) }
     }
 }
 

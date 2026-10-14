@@ -84,8 +84,8 @@ private fun Content(app: AppState, windowState: WindowState, noticeAccepted: Boo
         AnimatedContent(
             app.stack.lastOrNull(),
             transitionSpec = {
-                if (LocalReduceMotionSnapshot.value) fadeIn(Motion.fade(Motion.Ms.fast)) togetherWith fadeOut(Motion.fade(Motion.Ms.fast))
-                else (fadeIn(Motion.fade(Motion.Ms.normal)) + slideInVertically(Motion.fade(Motion.Ms.normal)) { it / 24 }) togetherWith fadeOut(Motion.fade(Motion.Ms.fast))
+                // Fade only: sliding a whole screen is what made navigation feel heavy
+                fadeIn(Motion.fade(Motion.Ms.fast)) togetherWith fadeOut(Motion.fade(Motion.Ms.instant))
             },
             label = "screen",
         ) { top ->
@@ -141,7 +141,7 @@ internal object LocalReduceMotionSnapshot { @Volatile var value = false }
 private fun TopBar(app: AppState) {
     val compact = LocalCompact.current
     Row(
-        Modifier.fillMaxWidth().height(if (compact) 52.dp else 64.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.9f), Brand.Ink))).padding(horizontal = LocalSide.current),
+        Modifier.fillMaxWidth().height(if (compact) 52.dp else 64.dp).background(Brand.Ink).padding(horizontal = LocalSide.current),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 14.dp else 22.dp),
     ) {
         Text(
@@ -149,7 +149,12 @@ private fun TopBar(app: AppState) {
             modifier = Modifier.padding(end = 6.dp).clickable { app.tab = Tab.Search }.pointerHoverIcon(PointerIcon.Hand),
         )
         // The tabs scroll sideways when the window is too narrow to show all of them
-        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(if (compact) 14.dp else 22.dp)) {
+        Spacer(Modifier.weight(1f))
+        // Glass pill holding the tabs, at the right like Movy's header
+        Row(
+            Modifier.clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = 0.08f)).horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 14.dp else 22.dp),
+        ) {
             Tab.entries.forEach { t ->
                 val active = if (t == Tab.Downloads) app.downloader.jobs.size else 0
                 NavItem(if (active > 0) "${t.label} ($active)" else t.label, app.tab == t) { app.tab = t }
