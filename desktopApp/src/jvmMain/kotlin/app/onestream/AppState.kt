@@ -83,8 +83,7 @@ class AppState(
     var searchFailures by mutableStateOf<List<String>>(emptyList())
     var searchProvider by mutableStateOf(0) // 0 = all
     /** Home rows already fetched, so returning to Home does not reload them. */
-    var homeKey: List<String>? = null
-    var homeRows by mutableStateOf<List<Pair<String, com.lagradost.cloudstream3.HomePageList>>?>(null)
+    val feed = app.onestream.ui.HomeFeed()
     val homeScroll = androidx.compose.foundation.lazy.LazyListState()
 
     var installed by mutableStateOf<List<InstalledPlugin>>(emptyList())

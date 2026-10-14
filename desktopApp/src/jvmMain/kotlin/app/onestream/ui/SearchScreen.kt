@@ -54,6 +54,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -239,47 +241,41 @@ private fun Results(app: AppState, results: List<SearchResponse>, failures: List
 /** Home: a billboard on top, then one titled row of posters per provider list. */
 @Composable
 private fun Browse(app: AppState, providers: List<MainAPI>, typeOk: (com.lagradost.cloudstream3.TvType?) -> Boolean) {
-    val apis = providers.filter { it.hasMainPage }.take(3) // a few providers at once keeps the home page quick to fill
+    val apis = providers.filter { it.hasMainPage }
     if (apis.isEmpty()) {
         Message("Search for a title", "None of the selected providers have a browse page.")
         return
     }
     val side = LocalSide.current
     val key = apis.map { it.name }
-    var rows by app::homeRows
-    var error by remember(key) { mutableStateOf<String?>(null) }
-    LaunchedEffect(key) {
-        if (app.homeKey == key && rows != null) return@LaunchedEffect // already loaded: back from a title
-        app.homeKey = key
-        rows = null; error = null
-        val collected = mutableListOf<Pair<String, HomePageList>>()
-        withContext(Dispatchers.IO) {
-            coroutineScope {
-                apis.map { api ->
-                    async {
-                        for (page in api.mainPage.take(6)) {
-                            runCatching { withTimeout(TIMEOUT_MS) { api.getMainPage(1, MainPageRequest(page.name, page.data, page.horizontalImages)) } }
-                                .onSuccess { r -> r?.items?.forEach { row -> synchronized(collected) { collected += api.name to row; rows = collected.toList() } } }
-                                .onFailure { error = it.message ?: "Could not load ${api.name}" }
-                        }
-                    }
-                }.awaitAll()
-            }
-        }
-        rows = collected.toList()
-    }
-    val list = rows?.map { (p, row) -> p to HomePageList(row.name, row.list.filter { typeOk(it.type) }, row.isHorizontalImages) }?.filter { it.second.list.isNotEmpty() }
     val data by app.store.data.collectAsState()
+    val feed = app.feed
+    // Shelves of titles similar to what was watched or saved, mixed into the feed
+    LaunchedEffect(key) {
+        val seeds = data.history.map { FeedSeed(it.apiName, it.url, it.name) } + data.bookmarks.map { FeedSeed(it.apiName, it.url, it.name) }
+        feed.ensure(key, apis, seeds, app::api)
+    }
+    // Lazy loading: when the last shelf is near, fetch the next few. Unlimited: the feed asks for later pages once the first are used.
+    LaunchedEffect(feed) {
+        while (true) {
+            snapshotFlow {
+                val li = app.homeScroll.layoutInfo
+                feed.key != null && !feed.loading && !feed.exhausted && li.totalItemsCount - (li.visibleItemsInfo.lastOrNull()?.index ?: 0) <= 4
+            }.first { it }
+            feed.loadMore()
+        }
+    }
+    val list = feed.rows.map { it.copy(list = it.list.filter { r -> typeOk(r.type) }) }.filter { it.list.isNotEmpty() }
     // Started but not finished, newest first
     val resume = data.history.filter { it.durationMs > 0 && it.positionMs > 15_000 && it.positionMs < it.durationMs * 0.95 }.take(15)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         // About 190dp per poster, with a partly visible last one to show that the row scrolls
         val posterW = (maxWidth - side) / (maxWidth / 190.dp).coerceIn(2.5f, 8.5f) - 8.dp
-        val featured = list?.flatMap { it.second.list }?.filter { it.posterUrl != null }?.distinctBy { it.url }?.take(5).orEmpty()
+        val featured = list.take(3).flatMap { it.list }.filter { it.posterUrl != null }.distinctBy { it.url }.take(5)
         LazyColumn(Modifier.fillMaxSize(), state = app.homeScroll, contentPadding = PaddingValues(bottom = 40.dp)) {
             if (featured.isNotEmpty()) item {
                 Billboard(app, featured, maxWidth) {
-                    list?.flatMap { it.second.list }?.randomOrNull()?.let { app.push(Screen.Details(it.apiName, it.url)) }
+                    list.flatMap { it.list }.randomOrNull()?.let { app.push(Screen.Details(it.apiName, it.url)) }
                 }
             }
             if (resume.isNotEmpty()) item {
@@ -301,14 +297,17 @@ private fun Browse(app: AppState, providers: List<MainAPI>, typeOk: (com.lagrado
                 }
             }
             when {
-                list == null -> item { HomeSkeleton(posterW, hero = resume.isEmpty() && data.bookmarks.isEmpty()) }
-                list.isEmpty() -> item { Message(error ?: "Nothing to show", isError = error != null, modifier = Modifier.fillMaxWidth().height(240.dp)) }
-                else -> items(list) { (provider, row) ->
-                    PosterShelf(row.name, provider.takeIf { apis.size > 1 }, { app.push(Screen.Shelf(row.name, row.list)) }) {
-                        rowItemsIndexed(row.list) { i, r ->
-                            PosterCard(r.name, r.posterUrl, modifier = Modifier.width(posterW), index = i) { app.push(Screen.Details(r.apiName, r.url)) }
+                list.isEmpty() && !feed.exhausted -> item { HomeSkeleton(posterW, hero = resume.isEmpty() && data.bookmarks.isEmpty()) }
+                list.isEmpty() -> item { Message("Nothing to show", modifier = Modifier.fillMaxWidth().height(240.dp)) }
+                else -> {
+                    items(list, key = { it.id }) { row ->
+                        PosterShelf(row.name, row.provider.takeIf { apis.size > 1 }, { app.push(Screen.Shelf(row.name, row.list)) }) {
+                            rowItemsIndexed(row.list) { i, r ->
+                                PosterCard(r.name, r.posterUrl, modifier = Modifier.width(posterW), index = i) { app.push(Screen.Details(r.apiName, r.url)) }
+                            }
                         }
                     }
+                    if (!feed.exhausted) item { Loading(Modifier.fillMaxWidth().height(120.dp)) }
                 }
             }
         }
