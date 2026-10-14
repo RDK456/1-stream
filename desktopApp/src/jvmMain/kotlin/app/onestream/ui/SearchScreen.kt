@@ -278,6 +278,15 @@ private fun Browse(app: AppState, providers: List<MainAPI>, typeOk: (com.lagrado
                     list.flatMap { it.list }.randomOrNull()?.let { app.push(Screen.Details(it.apiName, it.url)) }
                 }
             }
+            // Movy-style ranking: the provider's first long list, numbered
+            val top = list.firstOrNull { it.list.size >= 5 }
+            if (top != null) item {
+                PosterShelf("TOP 10", null, null) {
+                    rowItemsIndexed(top.list.take(10)) { i, r ->
+                        PosterCard(r.name, r.posterUrl, modifier = Modifier.width(posterW), index = i, rank = i + 1) { app.push(Screen.Details(r.apiName, r.url)) }
+                    }
+                }
+            }
             if (resume.isNotEmpty()) item {
                 PosterShelf("Continue watching", null, { app.tab = Tab.History }) {
                     rowItemsIndexed(resume) { i, h ->

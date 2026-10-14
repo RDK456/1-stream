@@ -125,6 +125,8 @@ fun PosterCard(
     index: Int = 0,
     /** When set, a small info button appears on hover that opens the title's details instead of playing. */
     onInfo: (() -> Unit)? = null,
+    /** 1-based rank for a "TOP 10" shelf: draws a red badge in the corner. */
+    rank: Int? = null,
     onClick: () -> Unit,
 ) {
     val src = remember { MutableInteractionSource() }
@@ -147,6 +149,13 @@ fun PosterCard(
                     .clip(CircleShape).background(Color.Black.copy(alpha = 0.6f)).border(2.dp, Color.White, CircleShape),
                 contentAlignment = Alignment.Center,
             ) { Glyph(IconKind.Play, Color.White, 22.dp) }
+            if (rank != null) Column(
+                Modifier.align(Alignment.TopStart).padding(start = 6.dp).clip(RoundedCornerShape(bottomStart = 4.dp, bottomEnd = 4.dp)).background(Brand.Red).padding(horizontal = 7.dp, vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("TOP", fontSize = 8.sp, fontWeight = FontWeight.Black, lineHeight = 9.sp)
+                Text(rank.toString(), fontSize = 14.sp, fontWeight = FontWeight.Black, lineHeight = 15.sp)
+            }
             if (onInfo != null) Box(
                 Modifier.align(Alignment.TopEnd).padding(6.dp).graphicsLayer { alpha = hover }.size(28.dp)
                     .clip(CircleShape).background(Color.Black.copy(alpha = 0.7f)).border(1.dp, Color.White, CircleShape)

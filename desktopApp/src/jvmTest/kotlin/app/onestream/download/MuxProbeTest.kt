@@ -16,9 +16,9 @@ class MuxProbeTest {
         val audio = File(System.getenv("PROBE_AUDIO") ?: return)
         val tmp = Files.createTempDirectory("mux").toFile()
         val dl = Downloader(CoroutineScope(SupervisorJob() + Dispatchers.IO), Store(File(tmp, "d.json")), File(tmp, "out"))
-        val out = File(tmp, "joined.ts")
-        val silent = File(tmp, "silent.mp4")
-        val aac = File(tmp, "audio.m4a")
+        val out = File(tmp, "joined.mp4")
+        val silent = File(tmp, "silent.ts")
+        val aac = File(tmp, "audio.ts")
         run {
             val latch = java.util.concurrent.CountDownLatch(1)
             val mp = app.onestream.player.Vlc.factory.mediaPlayers().newMediaPlayer()
@@ -26,7 +26,7 @@ class MuxProbeTest {
                 override fun finished(p: uk.co.caprica.vlcj.player.base.MediaPlayer) { latch.countDown() }
                 override fun error(p: uk.co.caprica.vlcj.player.base.MediaPlayer) { latch.countDown() }
             })
-            mp.media().play(video.absolutePath, ":no-sout-video", ":sout=#std{access=file,mux=mp4,dst='${aac.absolutePath}'}")
+            mp.media().play(video.absolutePath, ":no-sout-video", ":sout=#std{access=file,mux=ts,dst='${aac.absolutePath}'}")
             latch.await(5, java.util.concurrent.TimeUnit.MINUTES); mp.release()
         }
         run {
@@ -36,7 +36,7 @@ class MuxProbeTest {
                 override fun finished(p: uk.co.caprica.vlcj.player.base.MediaPlayer) { latch.countDown() }
                 override fun error(p: uk.co.caprica.vlcj.player.base.MediaPlayer) { latch.countDown() }
             })
-            mp.media().play(video.absolutePath, ":no-sout-audio", ":sout=#std{access=file,mux=mp4,dst='${silent.absolutePath}'}")
+            mp.media().play(video.absolutePath, ":no-sout-audio", ":sout=#std{access=file,mux=ts,dst='${silent.absolutePath}'}")
             latch.await(5, java.util.concurrent.TimeUnit.MINUTES); mp.release()
         }
         val t = System.currentTimeMillis()

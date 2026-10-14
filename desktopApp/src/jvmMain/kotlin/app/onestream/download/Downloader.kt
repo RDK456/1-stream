@@ -172,8 +172,9 @@ class Downloader(
             audioUrl = pick.audio?.let { audioRendition(master, masterUrl, it) }
         }
         val (init, segs) = parseMedia(link, url, text)
-        if (init != null) job.file = File(job.file.parentFile, job.file.nameWithoutExtension + ".mp4")
         val audio = audioUrl?.let { parseMedia(link, it, text(link, it)) }
+        // A joined file is always mp4; one without separate sound keeps the wrapper the stream came in
+        if (init != null || audio != null) job.file = File(job.file.parentFile, job.file.nameWithoutExtension + ".mp4")
         job.total = segs.size.toLong() + (audio?.second?.size ?: 0)
         val videoPart = part(job)
         fetchTo(link, videoPart, init, segs, job)
@@ -182,9 +183,11 @@ class Downloader(
         try {
             fetchTo(link, audioPart, audio.first, audio.second, job)
             if (!mux(videoPart, audioPart, job.file)) {
-                // Never throw away a finished download: keep the picture and put the sound beside it
+                // Never throw away a finished download: keep the picture and put the sound beside it, each in its own wrapper
+                val dir = job.file.parentFile; val base = job.file.nameWithoutExtension
+                job.file = File(dir, base + if (init != null) ".mp4" else ".ts")
                 videoPart.copyTo(job.file, overwrite = true)
-                audioPart.copyTo(File(job.file.parentFile, job.file.nameWithoutExtension + ".audio." + job.file.extension), overwrite = true)
+                audioPart.copyTo(File(dir, "$base.audio." + if (audio.first != null) "mp4" else "ts"), overwrite = true)
             }
         } finally { videoPart.delete(); audioPart.delete() }
     }
@@ -236,9 +239,24 @@ class Downloader(
         }
     }
 
-    /** Joins a video-only and an audio-only file into [out] with the libVLC the player already uses (stream output, no re-encoding). */
+    /**
+     * Joins a video-only and an audio-only file into the mp4 [out] with the libVLC the player already uses (stream output, no re-encoding).
+     * The sound is first rewrapped as m4a: libVLC takes it as a track from that, but not from an audio-only transport stream.
+     */
     internal fun mux(video: File, audio: File, out: File): Boolean {
+        val m4a = File(out.path + ".audio.m4a")
         val tmp = File(out.path + ".mux")
+        try {
+            if (!vlcCopy(audio, m4a, ":no-sout-video") || m4a.length() == 0L) return false
+            if (!vlcCopy(video, tmp, ":sout-all", ":input-slave=file:///${m4a.absolutePath.replace(File.separatorChar, '/')}")) return false
+            if (tmp.length() < video.length() / 2) return false
+            tmp.copyTo(out, overwrite = true)
+            return true
+        } finally { m4a.delete(); tmp.delete() }
+    }
+
+    /** Plays [src] into an mp4 file at [dst] through libVLC's stream output, copying the streams as they are. */
+    private fun vlcCopy(src: File, dst: File, vararg options: String): Boolean {
         val done = java.util.concurrent.CountDownLatch(1)
         var ok = true
         val mp = try { app.onestream.player.Vlc.factory.mediaPlayers().newMediaPlayer() } catch (e: Throwable) { return false }
@@ -247,16 +265,10 @@ class Downloader(
                 override fun finished(p: uk.co.caprica.vlcj.player.base.MediaPlayer) { done.countDown() }
                 override fun error(p: uk.co.caprica.vlcj.player.base.MediaPlayer) { ok = false; done.countDown() }
             })
-            val mux = if (out.extension.equals("mp4", true)) "mp4" else "ts"
-            val started = mp.media().play(
-                video.absolutePath, ":input-slave=file:///${audio.absolutePath.replace(File.separatorChar, '/')}", ":sout-all",
-                ":sout=#std{access=file,mux=$mux,dst='${tmp.absolutePath}'}",
-            )
+            val started = mp.media().play(src.absolutePath, *options, ":sout=#std{access=file,mux=mp4,dst='${dst.absolutePath}'}")
             if (!started || !done.await(30, java.util.concurrent.TimeUnit.MINUTES)) ok = false
         } finally { runCatching { mp.controls().stop() }; mp.release() }
-        if (!ok || tmp.length() < video.length() / 2) { tmp.delete(); return false }
-        tmp.copyTo(out, overwrite = true); tmp.delete()
-        return true
+        return ok
     }
 
     private fun decrypt(s: Seg, data: ByteArray): ByteArray =
