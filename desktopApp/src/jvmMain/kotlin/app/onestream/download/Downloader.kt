@@ -10,6 +10,8 @@ import app.onestream.Store
 import app.onestream.plugins.Repositories
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import app.onestream.DlSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +39,7 @@ import kotlin.math.abs
 enum class DlState { Running, Failed }
 
 /** One download in progress (or failed). Finished downloads move to [Store] as a [DownloadRecord]. */
-class DownloadJob(val id: String, val title: String, val label: String, file: File) {
+class DownloadJob(val id: String, val title: String, val label: String, file: File, internal val link: ExtractorLink) {
     var file by mutableStateOf(file)
     var done by mutableLongStateOf(0L)
     var total by mutableLongStateOf(0L)
@@ -59,16 +61,25 @@ class Downloader(
     val jobs = mutableStateListOf<DownloadJob>()
 
     fun start(title: String, link: ExtractorLink): DownloadJob {
-        val hls = link.type == ExtractorLinkType.M3U8 || link.url.substringBefore('?').endsWith(".m3u8", true)
+        val hls = isHls(link)
         val ext = if (hls) "ts" else link.url.substringBefore('?').substringAfterLast('.', "").lowercase().takeIf { it in VIDEO_EXT } ?: "mp4"
         val label = qualityLabel(link.quality)
         dir.mkdirs()
-        val job = DownloadJob(UUID.randomUUID().toString(), title, label, uniqueFile(dir, "${safe(title)} [$label]", ext))
+        val job = DownloadJob(UUID.randomUUID().toString(), title, label, uniqueFile(dir, "${safe(title)} [$label]", ext), link)
         jobs += job
+        run(job)
+        return job
+    }
+
+    private fun isHls(link: ExtractorLink) = link.type == ExtractorLinkType.M3U8 || link.url.substringBefore('?').endsWith(".m3u8", true)
+
+    private fun run(job: DownloadJob) {
+        val link = job.link
         job.task = scope.launch(Dispatchers.IO) {
             try {
-                if (hls) hls(link, job) else direct(link, job)
-                store.addDownload(DownloadRecord(job.id, title, label, job.file.absolutePath, job.file.length(), System.currentTimeMillis()))
+                if (isHls(link)) hls(link, job) else direct(link, job)
+                val src = DlSource(link.url, link.referer, link.quality, isHls(link), link.headers)
+                store.addDownload(DownloadRecord(job.id, job.title, job.label, job.file.absolutePath, job.file.length(), System.currentTimeMillis(), src))
                 jobs.remove(job)
             } catch (e: CancellationException) {
                 part(job).delete(); throw e
@@ -76,7 +87,24 @@ class Downloader(
                 part(job).delete(); job.state = DlState.Failed; job.error = e.message ?: e.javaClass.simpleName
             }
         }
-        return job
+    }
+
+    /** Runs a failed download again from the start. */
+    fun retry(job: DownloadJob) {
+        if (job.state != DlState.Failed) return
+        job.state = DlState.Running; job.error = null; job.done = 0; job.total = 0
+        run(job)
+    }
+
+    /** Downloads a saved file's stream again (e.g. to get the sound an older download lacked) as a new file next to the old one. */
+    fun again(r: DownloadRecord) {
+        val s = r.src ?: return
+        scope.launch {
+            val link = newExtractorLink("Saved", "Saved", s.url, if (s.m3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+                referer = s.referer; quality = s.quality; headers = s.headers
+            }
+            start(r.title, link)
+        }
     }
 
     fun cancel(job: DownloadJob) { job.task?.cancel(); jobs.remove(job) }
@@ -153,7 +181,11 @@ class Downloader(
         val audioPart = File(job.file.path + ".audio.part")
         try {
             fetchTo(link, audioPart, audio.first, audio.second, job)
-            if (!mux(videoPart, audioPart, job.file)) throw IOException("Could not join the sound track into the video (VLC missing?)")
+            if (!mux(videoPart, audioPart, job.file)) {
+                // Never throw away a finished download: keep the picture and put the sound beside it
+                videoPart.copyTo(job.file, overwrite = true)
+                audioPart.copyTo(File(job.file.parentFile, job.file.nameWithoutExtension + ".audio." + job.file.extension), overwrite = true)
+            }
         } finally { videoPart.delete(); audioPart.delete() }
     }
 
@@ -204,17 +236,25 @@ class Downloader(
         }
     }
 
-    /** Joins a video-only and an audio-only file into [out] with the VLC that ships with the app (no re-encoding). */
-    private fun mux(video: File, audio: File, out: File): Boolean {
-        val vlc = app.onestream.player.Vlc.findDir()?.let { File(it, "vlc.exe") }?.takeIf { it.isFile } ?: return false
-        val mux = if (out.extension.equals("mp4", true)) "mp4" else "ts"
+    /** Joins a video-only and an audio-only file into [out] with the libVLC the player already uses (stream output, no re-encoding). */
+    internal fun mux(video: File, audio: File, out: File): Boolean {
         val tmp = File(out.path + ".mux")
-        val p = ProcessBuilder(
-            vlc.path, "-I", "dummy", "--no-repeat", "--no-loop", video.absolutePath, "--input-slave=${audio.toURI()}",
-            "--sout-all", "--sout", "#std{access=file,mux=$mux,dst=${tmp.absolutePath}}", "vlc://quit",
-        ).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
-        if (!p.waitFor(20, java.util.concurrent.TimeUnit.MINUTES)) { p.destroyForcibly(); tmp.delete(); return false }
-        if (p.exitValue() != 0 || tmp.length() < video.length() / 2) { tmp.delete(); return false }
+        val done = java.util.concurrent.CountDownLatch(1)
+        var ok = true
+        val mp = try { app.onestream.player.Vlc.factory.mediaPlayers().newMediaPlayer() } catch (e: Throwable) { return false }
+        try {
+            mp.events().addMediaPlayerEventListener(object : uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter() {
+                override fun finished(p: uk.co.caprica.vlcj.player.base.MediaPlayer) { done.countDown() }
+                override fun error(p: uk.co.caprica.vlcj.player.base.MediaPlayer) { ok = false; done.countDown() }
+            })
+            val mux = if (out.extension.equals("mp4", true)) "mp4" else "ts"
+            val started = mp.media().play(
+                video.absolutePath, ":input-slave=file:///${audio.absolutePath.replace(File.separatorChar, '/')}", ":sout-all",
+                ":sout=#std{access=file,mux=$mux,dst='${tmp.absolutePath}'}",
+            )
+            if (!started || !done.await(30, java.util.concurrent.TimeUnit.MINUTES)) ok = false
+        } finally { runCatching { mp.controls().stop() }; mp.release() }
+        if (!ok || tmp.length() < video.length() / 2) { tmp.delete(); return false }
         tmp.copyTo(out, overwrite = true); tmp.delete()
         return true
     }

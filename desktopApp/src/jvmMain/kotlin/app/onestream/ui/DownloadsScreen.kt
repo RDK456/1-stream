@@ -72,6 +72,7 @@ private fun JobRow(app: AppState, j: DownloadJob) {
                     else LinearProgressIndicator(color = Brand.Red, trackColor = Brand.Line, modifier = bar)
                 }
             }
+            if (j.state == DlState.Failed) GradientButton("Retry", { app.downloader.retry(j) })
             GhostButton(if (j.state == DlState.Failed) "Dismiss" else "Cancel", { app.downloader.cancel(j) })
         }
     }
@@ -86,12 +87,13 @@ private fun RecordRow(app: AppState, r: DownloadRecord) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(r.title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    if (exists) "${r.label} · ${mb(file.length())} · ${ago(r.at)}" else "The file is gone from ${file.parent}",
+                    if (exists) "${r.label} · ${mb(file.length())} · ${ago(r.at)}" + (if (r.src == null) " · older download: if it has no sound, download it again from its title" else "") else "The file is gone from ${file.parent}",
                     style = MaterialTheme.typography.bodySmall, color = if (exists) Brand.Muted else MaterialTheme.colorScheme.error,
                 )
             }
             if (exists) {
                 GradientButton("Play", { runCatching { Desktop.getDesktop().open(file) } })
+                if (r.src != null) GhostButton("Download again", { app.downloader.again(r) })
                 if (!LocalCompact.current) GhostButton("Show", { runCatching { ProcessBuilder("explorer.exe", "/select,${file.absolutePath}").start() } })
             }
             GhostButton(if (exists) "Delete" else "Remove", { file.delete(); app.store.removeDownload(r.id) })

@@ -39,7 +39,12 @@ data class DownloadRecord(
     val path: String,
     val bytes: Long,
     val at: Long,
+    /** The stream it came from, so it can be downloaded again. Missing on downloads made before 1.0.11. */
+    val src: DlSource? = null,
 )
+
+@Serializable
+data class DlSource(val url: String, val referer: String = "", val quality: Int = 0, val m3u8: Boolean = false, val headers: Map<String, String> = emptyMap())
 
 /** Where an installed plugin jar came from, so it can be updated from the same repository. */
 @Serializable
