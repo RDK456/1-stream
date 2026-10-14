@@ -44,7 +44,11 @@ data class DownloadRecord(
 )
 
 @Serializable
-data class DlSource(val url: String, val referer: String = "", val quality: Int = 0, val m3u8: Boolean = false, val headers: Map<String, String> = emptyMap())
+data class DlSource(val url: String, val referer: String = "", val quality: Int = 0, val m3u8: Boolean = false, val headers: Map<String, String> = emptyMap(), val subs: List<DlSub> = emptyList())
+
+/** A subtitle file offered with a stream, saved next to the video. */
+@Serializable
+data class DlSub(val lang: String, val url: String, val headers: Map<String, String> = emptyMap())
 
 /** Where an installed plugin jar came from, so it can be updated from the same repository. */
 @Serializable

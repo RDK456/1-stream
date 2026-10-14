@@ -35,6 +35,8 @@ class UpdateController(
     private val fixedFeedUrl: String?,
 ) {
     private var updater: Updater? = null
+    /** Set by [updateNow]: restart into the update as soon as it is staged. */
+    private var restartWhenReady = false
 
     var status by mutableStateOf<UpdateStatus>(UpdateStatus.Idle)
         private set
@@ -88,7 +90,20 @@ class UpdateController(
         status = try {
             UpdateStatus.Ready(u.stage(feed) { status = UpdateStatus.Downloading(feed.version, it) })
         } catch (e: Exception) { UpdateStatus.Failed(e.message ?: e.javaClass.simpleName) }
+        if (restartWhenReady && status is UpdateStatus.Ready) restartInto()
+        restartWhenReady = false
     }
+
+    /** One click: fetches the update (a small patch when one exists for this version) and restarts into it. */
+    fun updateNow() {
+        when (status) {
+            is UpdateStatus.Ready -> restartInto()
+            is UpdateStatus.Available -> { restartWhenReady = true; downloadAvailable() }
+            else -> {}
+        }
+    }
+
+    private fun restartInto() { if (applyNow(relaunch = true)) kotlin.system.exitProcess(0) }
 
     fun downloadAvailable() {
         val a = status as? UpdateStatus.Available ?: return

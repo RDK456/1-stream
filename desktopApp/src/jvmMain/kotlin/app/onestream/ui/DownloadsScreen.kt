@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -82,6 +83,8 @@ private fun JobRow(app: AppState, j: DownloadJob) {
 private fun RecordRow(app: AppState, r: DownloadRecord) {
     val file = File(r.path)
     val exists = file.isFile
+    var ask by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    if (ask) DeleteChoice(r, app) { ask = false }
     Plate(Modifier.enter(0)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -96,7 +99,31 @@ private fun RecordRow(app: AppState, r: DownloadRecord) {
                 if (r.src != null) GhostButton("Download again", { app.downloader.again(r) })
                 if (!LocalCompact.current) GhostButton("Show", { runCatching { ProcessBuilder("explorer.exe", "/select,${file.absolutePath}").start() } })
             }
-            GhostButton(if (exists) "Delete" else "Remove", { file.delete(); app.store.removeDownload(r.id) })
+            GhostButton(if (exists) "Delete" else "Remove", { if (exists) ask = true else app.store.removeDownload(r.id) })
         }
     }
+}
+
+/** The saved file and the subtitle / sound files saved beside it. */
+private fun filesOf(file: File): List<File> {
+    val base = file.nameWithoutExtension + "."
+    return listOf(file) + (file.parentFile?.listFiles { f -> f != file && f.name.startsWith(base) && f.extension.lowercase() in setOf("srt", "vtt", "ass", "ssa", "sub") || f.name.startsWith("$base" + "audio.") }.orEmpty())
+}
+
+@Composable
+private fun DeleteChoice(r: DownloadRecord, app: AppState, onClose: () -> Unit) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onClose,
+        containerColor = Brand.Panel,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        title = { Text("Delete \"${r.title}\"?", fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = { Text("Remove it from this list only, or delete the video file from your computer as well.", color = Brand.Muted) },
+        confirmButton = { GradientButton("Delete file too", { filesOf(File(r.path)).forEach { it.delete() }; app.store.removeDownload(r.id); onClose() }) },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GhostButton("Remove from list", { app.store.removeDownload(r.id); onClose() })
+                GhostButton("Cancel", onClose)
+            }
+        },
+    )
 }

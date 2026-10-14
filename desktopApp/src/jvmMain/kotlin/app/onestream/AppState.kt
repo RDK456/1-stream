@@ -76,6 +76,9 @@ class AppState(
     var railExpanded by mutableStateOf(true)
     val stack = mutableStateListOf<Screen>()
 
+    /** The window's close button was pressed: ask before quitting. */
+    var confirmClose by mutableStateOf(false)
+
     /** Home search, kept here so it survives opening a title and coming back. */
     var query by mutableStateOf("")
     var searched by mutableStateOf(false)

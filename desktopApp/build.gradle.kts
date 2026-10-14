@@ -39,7 +39,8 @@ kotlin {
 }
 
 val appVersion = providers.gradleProperty("app.version").getOrElse("1.0.0")
-val updateUrl = providers.gradleProperty("update.url").getOrElse("")
+// Installed builds look here for updates (a small patch when one exists), so one click is enough
+val updateUrl = providers.gradleProperty("update.url").getOrElse("https://github.com/RDK456/1-stream/releases/latest/download/update.json")
 
 tasks.withType<Test> {
     maxHeapSize = "2g"

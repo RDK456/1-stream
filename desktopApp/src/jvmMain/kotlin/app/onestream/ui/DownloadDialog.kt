@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.onestream.AppState
+import app.onestream.DlSub
 import app.onestream.Screen
 import app.onestream.Tab
 import app.onestream.download.Downloader
@@ -43,12 +44,13 @@ import kotlinx.coroutines.withTimeout
 @Composable
 fun DownloadDialog(app: AppState, s: Screen.Details, item: PlayItem, title: String, onClose: () -> Unit) {
     val links = remember(item) { mutableStateListOf<ExtractorLink>() }
+    val subs = remember(item) { mutableStateListOf<DlSub>() }
     var searching by remember(item) { mutableStateOf(true) }
     var failure by remember(item) { mutableStateOf<String?>(null) }
     LaunchedEffect(item) {
         val api = app.api(s.apiName)
         if (api == null) { failure = "Provider \"${s.apiName}\" is not installed."; searching = false; return@LaunchedEffect }
-        runCatching { withContext(Dispatchers.IO) { withTimeout(90_000) { api.loadLinks(item.data, false, {}, { l -> synchronized(links) { links.add(l) } }) } } }
+        runCatching { withContext(Dispatchers.IO) { withTimeout(90_000) { api.loadLinks(item.data, false, { sf -> synchronized(subs) { subs.add(DlSub(sf.lang, sf.url, sf.headers.orEmpty())) } }, { l -> synchronized(links) { links.add(l) } }) } } }
             .onFailure { failure = it.message ?: it.javaClass.simpleName }
         searching = false
     }
@@ -67,7 +69,7 @@ fun DownloadDialog(app: AppState, s: Screen.Details, item: PlayItem, title: Stri
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).background(Brand.PanelHi).border(1.dp, Brand.Line, RoundedCornerShape(6.dp))
                             .clickable {
-                                app.downloader.start(title, l)
+                                app.downloader.start(title, l, subs.toList())
                                 onClose()
                                 app.stack.clear(); app.tab = Tab.Downloads
                             }

@@ -57,6 +57,18 @@ class DownloaderTest {
         assertEquals(job.file.absolutePath, store.data.value.downloads.single().path)
     }
 
+    @Test fun subtitlesAreSavedBesideTheVideo() {
+        routes["/m.mp4"] = ByteArray(1000) { 1 }
+        routes["/en.vtt"] = "WEBVTT\n\n00:00.000 --> 00:01.000\nHello\n".toByteArray()
+        routes["/fr.srt"] = "1\n00:00:00,000 --> 00:00:01,000\nBonjour\n".toByteArray()
+        val job = dl.start("Film", link("$base/m.mp4", 720, ExtractorLinkType.VIDEO), listOf(app.onestream.DlSub("English", "$base/en.vtt"), app.onestream.DlSub("Français", "$base/fr.srt"), app.onestream.DlSub("Gone", "$base/missing.srt")))
+        finish(job)
+        val names = job.file.parentFile.list().orEmpty().toSet()
+        assertTrue("Film [720p].English.vtt" in names && "Film [720p].Français.srt" in names, "subtitles saved with the video's name: $names")
+        assertEquals(3, store.data.value.downloads.single().src?.subs?.size)
+        assertEquals(3, names.size, "video + 2 subtitles, nothing for the missing one: $names")
+    }
+
     @Test fun hlsPicksTheRequestedQualityAndDecrypts() {
         val key = ByteArray(16) { (it * 7).toByte() }
         val plain = List(3) { i -> ByteArray(5_000) { (i * 31 + it).toByte() } }

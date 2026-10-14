@@ -75,6 +75,7 @@ class UpdaterTest {
         val staged = updater.stage(feed)
         assertIs<Staged.Delta>(staged)
         assertTrue(File(staged.dir, "app/c.jar").isFile && !File(staged.dir, "app/a.jar").exists(), "only changed files are staged")
+        File(install, "app/b.jar").setReadOnly() // like the launcher exe in a real install: the update must still replace it
         // run the real apply script (no relaunch) and wait for it
         val script = File(tmp, "apply.cmd").apply { writeText(Applier.script(staged, install, "1-stream.exe", relaunch = false)) }
         assertEquals(0, ProcessBuilder(System.getenv("SystemRoot") + "\\System32\\cmd.exe", "/c", script.absolutePath).start().waitFor())

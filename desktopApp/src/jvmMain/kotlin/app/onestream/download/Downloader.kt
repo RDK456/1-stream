@@ -12,6 +12,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import app.onestream.DlSource
+import app.onestream.DlSub
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +40,7 @@ import kotlin.math.abs
 enum class DlState { Running, Failed }
 
 /** One download in progress (or failed). Finished downloads move to [Store] as a [DownloadRecord]. */
-class DownloadJob(val id: String, val title: String, val label: String, file: File, internal val link: ExtractorLink) {
+class DownloadJob(val id: String, val title: String, val label: String, file: File, internal val link: ExtractorLink, internal val subs: List<DlSub> = emptyList()) {
     var file by mutableStateOf(file)
     var done by mutableLongStateOf(0L)
     var total by mutableLongStateOf(0L)
@@ -60,12 +61,12 @@ class Downloader(
 ) {
     val jobs = mutableStateListOf<DownloadJob>()
 
-    fun start(title: String, link: ExtractorLink): DownloadJob {
+    fun start(title: String, link: ExtractorLink, subs: List<DlSub> = emptyList()): DownloadJob {
         val hls = isHls(link)
         val ext = if (hls) "ts" else link.url.substringBefore('?').substringAfterLast('.', "").lowercase().takeIf { it in VIDEO_EXT } ?: "mp4"
         val label = qualityLabel(link.quality)
         dir.mkdirs()
-        val job = DownloadJob(UUID.randomUUID().toString(), title, label, uniqueFile(dir, "${safe(title)} [$label]", ext), link)
+        val job = DownloadJob(UUID.randomUUID().toString(), title, label, uniqueFile(dir, "${safe(title)} [$label]", ext), link, subs)
         jobs += job
         run(job)
         return job
@@ -78,13 +79,30 @@ class Downloader(
         job.task = scope.launch(Dispatchers.IO) {
             try {
                 if (isHls(link)) hls(link, job) else direct(link, job)
-                val src = DlSource(link.url, link.referer, link.quality, isHls(link), link.headers)
+                saveSubs(job)
+                val src = DlSource(link.url, link.referer, link.quality, isHls(link), link.headers, job.subs)
                 store.addDownload(DownloadRecord(job.id, job.title, job.label, job.file.absolutePath, job.file.length(), System.currentTimeMillis(), src))
                 jobs.remove(job)
             } catch (e: CancellationException) {
                 part(job).delete(); throw e
             } catch (e: Throwable) {
                 part(job).delete(); job.state = DlState.Failed; job.error = e.message ?: e.javaClass.simpleName
+            }
+        }
+    }
+
+    /** Saves each offered subtitle beside the video as "<video name>.<language>.<ext>", which players such as VLC load by themselves. A subtitle that fails is skipped. */
+    private fun saveSubs(job: DownloadJob) {
+        val base = job.file.nameWithoutExtension
+        job.subs.distinctBy { it.url }.take(12).forEach { s ->
+            runCatching {
+                val b = HttpRequest.newBuilder(URI(s.url)).timeout(Duration.ofSeconds(30)).header("User-Agent", "Mozilla/5.0")
+                if (job.link.referer.isNotBlank()) b.header("Referer", job.link.referer)
+                s.headers.forEach { (k, v) -> runCatching { b.setHeader(k, v) } }
+                val r = http.send(b.GET().build(), HttpResponse.BodyHandlers.ofByteArray())
+                if (r.statusCode() !in 200..299 || r.body().isEmpty()) return@runCatching
+                val ext = s.url.substringBefore('?').substringAfterLast('.', "").lowercase().takeIf { it in setOf("srt", "vtt", "ass", "ssa") } ?: "srt"
+                uniqueFile(job.file.parentFile, "$base.${safe(s.lang).replace(' ', '_').take(30)}", ext).writeBytes(r.body())
             }
         }
     }
@@ -103,7 +121,7 @@ class Downloader(
             val link = newExtractorLink("Saved", "Saved", s.url, if (s.m3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
                 referer = s.referer; quality = s.quality; headers = s.headers
             }
-            start(r.title, link)
+            start(r.title, link, s.subs)
         }
     }
 

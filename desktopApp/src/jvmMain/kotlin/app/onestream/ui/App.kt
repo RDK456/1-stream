@@ -55,22 +55,23 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.WindowState
 import app.onestream.APP_NAME
 import app.onestream.AppState
+import app.onestream.download.DlState
 import app.onestream.Screen
 import app.onestream.Tab
 
 @Composable
-fun App(app: AppState, windowState: WindowState) {
+fun App(app: AppState, windowState: WindowState, onQuit: () -> Unit = {}) {
     val data by app.store.data.collectAsState()
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val side = (maxWidth * 0.04f).coerceIn(14.dp, 56.dp)
         CompositionLocalProvider(LocalSide provides side, LocalCompact provides (maxWidth < 720.dp)) {
-            Content(app, windowState, data.noticeAccepted)
+            Content(app, windowState, data.noticeAccepted, onQuit)
         }
     }
 }
 
 @Composable
-private fun Content(app: AppState, windowState: WindowState, noticeAccepted: Boolean) {
+private fun Content(app: AppState, windowState: WindowState, noticeAccepted: Boolean, onQuit: () -> Unit) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Surface(
@@ -113,6 +114,24 @@ private fun Content(app: AppState, windowState: WindowState, noticeAccepted: Boo
                     }
                 }
             }
+        }
+        if (app.confirmClose) {
+            val running = app.downloader.jobs.count { it.state == DlState.Running }
+            AlertDialog(
+                onDismissRequest = { app.confirmClose = false },
+                containerColor = Brand.Panel,
+                shape = RoundedCornerShape(8.dp),
+                title = { Text("Quit 1-stream?", fontWeight = FontWeight.SemiBold) },
+                text = {
+                    Text(
+                        if (running > 0) "$running download${if (running > 1) "s are" else " is"} still running and will stop. You can retry them next time."
+                        else "Your library and history are saved.",
+                        color = Brand.Muted,
+                    )
+                },
+                confirmButton = { GradientButton("Quit", onQuit) },
+                dismissButton = { GhostButton("Stay", { app.confirmClose = false }) },
+            )
         }
         if (!noticeAccepted) {
             AlertDialog(
@@ -161,13 +180,22 @@ private fun TopBar(app: AppState) {
             }
         }
         app.defaultInstall?.let { Text(if (it.total > 0) "${it.phase} ${it.done}/${it.total}" else it.phase, color = Brand.Muted, maxLines = 1, style = MaterialTheme.typography.labelMedium) }
-        if (app.updates.status is app.onestream.update.UpdateStatus.Ready) {
+        // One click: download (a small patch when possible) and restart into the new version
+        val update = when (val st = app.updates.status) {
+            is app.onestream.update.UpdateStatus.Ready -> "Restart to update"
+            is app.onestream.update.UpdateStatus.Available -> "Update to ${st.feed.version}"
+            else -> null
+        }
+        if (update != null) {
             Text(
-                "Restart to update", color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                update, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1,
                 modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Brand.Red)
-                    .clickable { if (app.updates.applyNow(relaunch = true)) kotlin.system.exitProcess(0) }
+                    .clickable { app.updates.updateNow() }
                     .pointerHoverIcon(PointerIcon.Hand).padding(horizontal = 14.dp, vertical = 7.dp),
             )
+        }
+        (app.updates.status as? app.onestream.update.UpdateStatus.Downloading)?.let {
+            Text("Updating ${(it.progress * 100).toInt()}%", color = Brand.Muted, maxLines = 1, style = MaterialTheme.typography.labelMedium)
         }
         // Profile square at the far right, like the Netflix header; opens Settings
         Box(

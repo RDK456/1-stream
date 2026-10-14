@@ -48,7 +48,7 @@ private fun runApp() = application {
 
     // Full screen is a borderless window over the whole monitor, above the taskbar: more reliable than the OS exclusive mode
     Window(
-        onCloseRequest = { app.updates.applyOnExit(); exitApplication() }, title = APP_NAME, icon = icon, state = windowState,
+        onCloseRequest = { app.confirmClose = true }, title = APP_NAME, icon = icon, state = windowState,
     ) {
         val data by app.store.data.collectAsState()
         LaunchedEffect(app.fullscreen) {
@@ -58,7 +58,7 @@ private fun runApp() = application {
         // Plugins are only fetched once the user has read the notice about what plugins are
         LaunchedEffect(data.noticeAccepted) { if (data.noticeAccepted) app.startMaintenance(DEFAULT_PLUGIN_REPOS) }
         LocalReduceMotionSnapshot.value = data.reduceMotion
-        OneStreamTheme(data.reduceMotion) { App(app, windowState) }
+        OneStreamTheme(data.reduceMotion) { App(app, windowState) { app.updates.applyOnExit(); exitApplication() } }
     }
 }
 /** Headless: check the feed, stage the update, apply it silently (no relaunch) and exit. Used to verify installs. */

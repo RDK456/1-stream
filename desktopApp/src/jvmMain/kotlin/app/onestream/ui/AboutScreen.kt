@@ -83,7 +83,7 @@ fun AboutScreen(app: AppState) {
                 }
                 when (st) {
                     is UpdateStatus.Ready -> GradientButton("Restart to update", { if (app.updates.applyNow(relaunch = true)) exitProcess(0) })
-                    is UpdateStatus.Available -> GradientButton("Download", { app.updates.downloadAvailable() })
+                    is UpdateStatus.Available -> GradientButton("Update now", { app.updates.updateNow() })
                     is UpdateStatus.Disabled, is UpdateStatus.Checking, is UpdateStatus.Downloading -> {}
                     else -> GhostButton("Check now", { app.updates.check() })
                 }

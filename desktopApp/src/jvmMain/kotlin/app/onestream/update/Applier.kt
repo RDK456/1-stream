@@ -11,8 +11,11 @@ object Applier {
         val dst = installDir.absolutePath
         val body = when (staged) {
             is Staged.Delta -> buildString {
-                appendLine("""%SystemRoot%\System32\xcopy.exe "${staged.dir.absolutePath}\*" "$dst\" /E /Y /I /Q >nul""")
+                // /R: the launcher exe is read-only, and without it the copy stops at the first file. Nothing is deleted if the copy failed.
+                appendLine("""%SystemRoot%\System32\xcopy.exe "${staged.dir.absolutePath}\*" "$dst\" /E /Y /I /Q /R >nul""")
+                appendLine("if errorlevel 1 goto done")
                 staged.removed.forEach { appendLine("""del /f /q "$dst\${it.replace('/', '\\')}" 2>nul""") }
+                appendLine(":done")
             }
             is Staged.Full -> """%SystemRoot%\System32\msiexec.exe /i "${staged.msi.absolutePath}" /qn /norestart""" + "\n"
         }
